@@ -300,6 +300,11 @@ BARA_HEADLESS=1 ./examples/todo_app/target/debug/todo_app --headless
 # Bara GUI 'Bara Todo Desktop': headless mode, skipping window.
 ```
 
+`bara run` also accepts a compiled binary directly (`bara run
+examples/todo_app/target/debug/todo_app -- --headless` executes it without
+rebuilding); other subcommands given a binary path resolve to the enclosing
+project via the nearest `bara.toml`.
+
 ---
 
 ## Running the Compiler & Tests

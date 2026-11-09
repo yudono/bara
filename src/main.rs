@@ -86,8 +86,9 @@ fn main() {
             let entry = parse_entry_arg(&args, 2);
             let root = current_project_root(entry.as_deref());
             let bridge = CargoBridge::new(root);
+            let effective = effective_source_entry(entry.as_deref());
 
-            if let Err(e) = bridge.check(entry.as_deref()) {
+            if let Err(e) = bridge.check(effective.as_deref()) {
                 eprintln!("Check failed:\n{e}");
                 process::exit(1);
             }
@@ -96,8 +97,9 @@ fn main() {
             let entry = parse_entry_arg(&args, 2);
             let root = current_project_root(entry.as_deref());
             let bridge = CargoBridge::new(root);
+            let effective = effective_source_entry(entry.as_deref());
 
-            match bridge.collect_sources(entry.as_deref()) {
+            match bridge.collect_sources(effective.as_deref()) {
                 Ok((sources, _)) => {
                     println!("Debugging {} source file(s) with Bara Diagnostic Engine...", sources.len());
                     let diags = bridge.diagnose_sources(&sources);
@@ -139,8 +141,9 @@ fn main() {
 
             let root = current_project_root(entry.as_deref());
             let bridge = CargoBridge::new(root);
+            let effective = effective_source_entry(entry.as_deref());
 
-            match bridge.transpile(entry.as_deref()) {
+            match bridge.transpile(effective.as_deref()) {
                 Ok(rust_code) => {
                     if let Some(out_p) = output_path {
                         if let Err(e) = fs::write(&out_p, &rust_code) {
@@ -171,8 +174,9 @@ fn main() {
 
             let root = current_project_root(entry.as_deref());
             let bridge = CargoBridge::new(root);
+            let effective = effective_source_entry(entry.as_deref());
 
-            match bridge.build(entry.as_deref(), release, offline) {
+            match bridge.build(effective.as_deref(), release, offline) {
                 Ok(bin_path) => {
                     if let Some(out_p) = output_path {
                         let dest = PathBuf::from(out_p);
@@ -183,7 +187,7 @@ fn main() {
                         }
                     }
                     if emit_rs {
-                        match bridge.emit_rs_to(&emit_rs_dir, entry.as_deref()) {
+                        match bridge.emit_rs_to(&emit_rs_dir, effective.as_deref()) {
                             Ok(files) => {
                                 println!(
                                     "✓ Emitted {} transpiled Rust file(s) to '{}':",
@@ -217,10 +221,30 @@ fn main() {
                 app_args.extend(args[pos + 1..].iter().cloned());
             }
 
+            // `bara run <compiled-binary>` executes the binary directly instead
+            // of treating it as a Bara source file.
+            if let Some(ref e) = entry {
+                if e.is_file() && !is_bara_entry_file(e) && is_executable(e) {
+                    use std::process::Command as ProcCommand;
+                    let mut cmd = ProcCommand::new(e);
+                    for a in &app_args {
+                        cmd.arg(a);
+                    }
+                    match cmd.status() {
+                        Ok(status) => process::exit(status.code().unwrap_or(0)),
+                        Err(err) => {
+                            eprintln!("Run failed: cannot execute {}: {err}", e.display());
+                            process::exit(1);
+                        }
+                    }
+                }
+            }
+
             let root = current_project_root(entry.as_deref());
             let bridge = CargoBridge::new(root);
+            let effective = effective_source_entry(entry.as_deref());
 
-            match bridge.run(entry.as_deref(), release, offline, &app_args) {
+            match bridge.run(effective.as_deref(), release, offline, &app_args) {
                 Ok(code) => process::exit(code),
                 Err(e) => {
                     eprintln!("Run failed:\n{e}");
@@ -281,17 +305,90 @@ fn parse_flag_val(args: &[String], flag: &str) -> Option<String> {
     None
 }
 
+/// True for Bara source files that can be used as a build entry point.
+fn is_bara_entry_file(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|s| s.to_str()),
+        Some("br") | Some("brx")
+    )
+}
+
+/// Walk up from `start` looking for the nearest ancestor containing `bara.toml`.
+fn ancestor_with_bara_toml(start: &Path) -> Option<PathBuf> {
+    let mut dir = if start.is_file() {
+        start.parent().map(|p| p.to_path_buf())?
+    } else if start.is_dir() {
+        start.to_path_buf()
+    } else {
+        return None;
+    };
+    loop {
+        if dir.join("bara.toml").is_file() {
+            return Some(dir);
+        }
+        match dir.parent() {
+            Some(parent) if !parent.as_os_str().is_empty() => dir = parent.to_path_buf(),
+            _ => return None,
+        }
+    }
+}
+
 fn current_project_root(entry: Option<&Path>) -> PathBuf {
     if let Some(e) = entry {
         if e.is_file() {
-            if let Some(parent) = e.parent() {
+            if is_bara_entry_file(e) {
+                if let Some(parent) = e.parent() {
+                    if !parent.as_os_str().is_empty() {
+                        return parent.to_path_buf();
+                    }
+                }
+            } else if let Some(root) = ancestor_with_bara_toml(e) {
+                // Non-Bara file (e.g. a compiled binary under target/debug):
+                // resolve to the enclosing Bara project instead of the file's
+                // immediate directory.
+                return root;
+            } else if let Some(parent) = e.parent() {
                 if !parent.as_os_str().is_empty() {
                     return parent.to_path_buf();
                 }
             }
         } else if e.is_dir() {
+            // A directory is a project root only if it (or an ancestor) holds bara.toml.
+            if e.join("bara.toml").is_file() {
+                return e.to_path_buf();
+            }
+            if let Some(root) = ancestor_with_bara_toml(e) {
+                return root;
+            }
             return e.to_path_buf();
+        } else if let Some(root) = ancestor_with_bara_toml(e) {
+            // Path does not exist (yet); still resolve via ancestors when possible.
+            return root;
         }
     }
     env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+}
+
+/// Normalize the CLI entry argument: a non-Bara file (e.g. a compiled binary)
+/// is not a valid source entry, so drop it and let the project default entry
+/// (`bara.toml` `entry`) take over.
+fn effective_source_entry(entry: Option<&Path>) -> Option<PathBuf> {
+    match entry {
+        Some(e) if e.is_file() && !is_bara_entry_file(e) => None,
+        Some(e) => Some(e.to_path_buf()),
+        None => None,
+    }
+}
+
+#[cfg(unix)]
+fn is_executable(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(path)
+        .map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
+}
+
+#[cfg(not(unix))]
+fn is_executable(path: &Path) -> bool {
+    path.is_file()
 }

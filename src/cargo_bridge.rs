@@ -760,7 +760,24 @@ impl CargoBridge {
             .wait()
             .map_err(|e| format!("Failed to wait for process: {e}"))?;
 
-        Ok(status.code().unwrap_or(0))
+        match status.code() {
+            Some(code) => Ok(code),
+            None => {
+                // Killed by a signal (e.g. SIGABRT from a non-unwinding panic).
+                // GUI apps on macOS can hit the upstream eframe 0.27 / winit 0.29 /
+                // icrate 0.0.4 screen-enumeration abort; Bara-generated code is
+                // equivalent to the eframe hello-world template.
+                eprintln!(
+                    "The app was terminated by an OS signal (no exit code). \
+                    If this is a GUI app on macOS and you see `countByEnumeratingWithState` \
+                    or `panic in a function that cannot unwind`, it is the known upstream \
+                    eframe 0.27 / winit screen-enumeration abort, not Bara logic. \
+                    Workarounds: run with `-- --headless` (or BARA_HEADLESS=1) to verify \
+                    without opening a window, or re-run to retry."
+                );
+                Ok(134)
+            }
+        }
     }
 
     /// Add a dependency to `bara.toml`

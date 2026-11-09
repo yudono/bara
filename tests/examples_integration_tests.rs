@@ -70,3 +70,31 @@ fn test_all_known_examples_transpile() {
         verify_example(name);
     }
 }
+
+#[test]
+fn test_cli_accepts_compiled_binary_path() {
+    // Regression test: `bara check <target/debug/<binary>>` must resolve to the
+    // enclosing project instead of failing with "No Bara source files found".
+    let bara = PathBuf::from(env!("CARGO_BIN_EXE_bara"));
+    let binary = example_dir("cli_algorithms").join("target").join("debug");
+    let binary = binary.join("cli_algorithms");
+    if !binary.is_file() {
+        eprintln!("Skipping binary-path test: binary not built yet");
+        return;
+    }
+    let out = std::process::Command::new(&bara)
+        .arg("check")
+        .arg(&binary)
+        .output()
+        .expect("failed to run bara check");
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(out.status.success(), "bara check <binary> failed: {combined}");
+    assert!(
+        combined.contains("verified successfully"),
+        "unexpected output: {combined}"
+    );
+}
