@@ -1,4 +1,72 @@
-use UsersPage
+
+type ClusterNode =
+    id: int
+    name: str
+    status = "healthy"
+
+type UsersPage =
+    title = "Cluster Nodes"
+    filter = ""
+    node_name = ""
+    node_status = "healthy"
+    node_error = ""
+    editing_id: int = 0
+    next_node_id: int = 6
+
+    users: [ClusterNode] = [
+        ClusterNode(id = 1, name = "web-01", status = "healthy"),
+        ClusterNode(id = 2, name = "web-02", status = "healthy"),
+        ClusterNode(id = 3, name = "worker-01", status = "healthy"),
+        ClusterNode(id = 4, name = "worker-02", status = "degraded"),
+        ClusterNode(id = 5, name = "db-primary", status = "healthy")
+    ]
+
+    add_or_save() =>
+        if node_name == "" =>
+            node_error = "Node name is required"
+            return
+        if editing_id == 0 =>
+            users.push(ClusterNode(id = next_node_id, name = node_name, status = node_status))
+            next_node_id = next_node_id + 1
+            node_error = ""
+            node_name = ""
+        else =>
+            i = 0
+            found = -1
+            while i < users.len() =>
+                if users[i].id == editing_id =>
+                    found = i
+                i = i + 1
+            if found != -1 =>
+                users[found] = ClusterNode(id = editing_id, name = node_name, status = node_status)
+                node_error = ""
+                editing_id = 0
+                node_name = ""
+                node_status = "healthy"
+            else =>
+                node_error = "Node not found"
+
+    edit_user(id: int) =>
+        i = 0
+        while i < users.len() =>
+            if users[i].id == id =>
+                editing_id = id
+                node_name = users[i].name.clone()
+                node_status = users[i].status.clone()
+                node_error = ""
+            i = i + 1
+
+    cancel_edit() =>
+        editing_id = 0
+        node_name = ""
+        node_status = "healthy"
+        node_error = ""
+
+    remove_user(id: int) =>
+        users.retain(u => u.id != id)
+        if editing_id == id =>
+            editing_id = 0
+            node_name = ""
 
 view UsersPage =>
     <Panel class="screen">

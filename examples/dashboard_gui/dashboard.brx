@@ -1,6 +1,21 @@
 use eframe
 use egui
-use DashboardApp
+use LoginForm
+use RegisterForm
+use OverviewPage
+use UsersPage
+
+type DashboardApp =
+    current_page: str = "login"
+    app_title = "Bara Cloud Monitoring"
+
+    navigate(page: str) -> str =>
+        current_page = page.clone()
+        return page
+
+    sign_out() =>
+        LoginForm.logout()
+        current_page = "login"
 
 view DashboardApp =>
     <Panel class="dashboard_screen">

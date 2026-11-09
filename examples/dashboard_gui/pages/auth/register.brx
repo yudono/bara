@@ -1,4 +1,17 @@
-use RegisterForm
+
+type RegisterForm =
+    username: str
+    email: str
+    password: str
+    registered = false
+    error_msg = ""
+
+    register() =>
+        if username == "" =>
+            error_msg = "Username is required"
+        else =>
+            registered = true
+            error_msg = ""
 
 view RegisterForm =>
     <Panel class="screen">

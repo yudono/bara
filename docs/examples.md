@@ -5,11 +5,11 @@ All examples build offline and run to exit code 0. GUI examples render with
 
 ```
 examples/
-  todo_app/          # Todo list: types + methods (.br) + native GUI (.brx)
-  dashboard_gui/     # Sidebar cloud dashboard: dashboard.brx shell + pages/** components
+  todo_app/          # Todo list: single-file todo.brx (type + view + inline <style>)
+  dashboard_gui/     # Sidebar cloud dashboard: single-file dashboard.brx shell + pages/** components
     pages/
-      auth/          # login, register (.br + .brx each, auth session state)
-      dashboard/     # overview (metrics/logs/search), users (node CRUD) (.br + .brx each)
+      auth/          # login.brx, register.brx (single-file auth components)
+      dashboard/     # overview.brx (metrics/logs/search), users.brx (node CRUD)
   brui_xml_gui/      # XML layout + shared CSS variant (layout.xml + styles.css)
   ../Solanum_bara/     # Pomodoro timer rewrite (standalone project): Timer/Settings/About + LapType enum + onUpdate ticking
   cli_algorithms/    # Fibonacci, primes, sorting, binary search, GCD
@@ -17,6 +17,14 @@ examples/
   multi_lib/         # Multi-module imports (libs/*.br), enums, Option/Result
   object_handling/   # Structs, &self/&mut self methods, nested composition
 ```
+
+Every `.brx` file is a self-contained React-style module: `type` (state +
+methods), `view` (JSX with props / `useEffect` / lifecycle hooks), and an
+optional inline `<style>` block may live in one file — the transpiler merges
+all project files before analysis, so splitting logic and UI across `.br`
++ `.brx` files is optional, never required. `todo.brx` demonstrates the
+inline-`<style>` variant; multi-page projects use one shared `styles.css`
+imported once via `use "styles.css"`.
 
 ## GUI examples
 

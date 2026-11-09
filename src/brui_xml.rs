@@ -90,7 +90,9 @@ fn sanitize_type_name(raw: &str, fallback: &str) -> String {
     let brui_tags = [
         "Panel", "Col", "Row", "Scroll", "Text", "Button", "Input", "TextField",
         "Checkbox", "Slider", "Separator", "Wrap", "Container", "Image", "Progress",
-        "Spacer",
+        "Spacer", "RadioButton", "Picker", "Dropdown", "Select", "Option",
+        "Switch", "Toggle", "Modal", "Dialog", "Spinner", "ActivityIndicator",
+        "BottomSheet", "Drawer", "SideMenu", "Stack", "VStack", "HStack",
     ];
     if brui_tags.contains(&t) {
         return fallback.to_string();

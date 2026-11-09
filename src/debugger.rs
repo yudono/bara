@@ -491,6 +491,10 @@ impl BaraDebugger {
             "Panel", "Col", "Row", "Scroll", "Text", "Button",
             "Input", "TextField", "Checkbox", "Slider", "Separator",
             "Wrap", "Container", "Image", "Progress", "Spacer",
+            "RadioButton", "Picker", "Dropdown", "Select", "Option",
+            "Switch", "Toggle", "Modal", "Dialog", "Spinner",
+            "ActivityIndicator", "BottomSheet", "Drawer", "SideMenu",
+            "Stack", "VStack", "HStack",
         ];
 
         if is_builtin_brui_tag(&el.tag) {
@@ -538,13 +542,42 @@ impl BaraDebugger {
         for child in &el.children {
             self.check_jsx_child_in(child, parent, depth);
         }
+
+        // React-style inline `style={{...}}`: validate property names early.
+        // Only literal keys/values apply; dynamic values are ignored by codegen.
+        for attr in &el.attributes {
+            if attr.name != "style" {
+                continue;
+            }
+            if let JsxAttrValue::Expr(Expr::Map(pairs, _)) = &attr.value {
+                let known = crate::css_engine::known_properties();
+                for (k, _) in pairs {
+                    let raw = match k {
+                        Expr::Ident(n, _) => n.clone(),
+                        Expr::Literal(Literal::Str(s), _) => s.clone(),
+                        _ => continue,
+                    };
+                    let norm = crate::css_engine::normalize_prop_name(&raw);
+                    if !known.iter().any(|p| *p == norm) {
+                        self.diagnostics.push(
+                            Diagnostic::warning(
+                                "W0007",
+                                format!("Unknown inline style property '{raw}' on '<{}>'", el.tag),
+                                attr.span,
+                            )
+                            .with_suggestion("Use a documented CSS property (see docs/brui_styling.md) or a class instead"),
+                        );
+                    }
+                }
+            }
+        }
     }
 
     /// Props are plain attributes: everything except behavioral/style keys must
     /// name a field of the child struct.
     fn check_component_props(&mut self, el: &JsxElement) {
         const NON_PROPS: &[&str] = &[
-            "class", "bind", "onClick", "placeholder", "name", "value", "progress",
+            "class", "bind", "onClick", "placeholder", "tooltip", "name", "value", "progress",
             "percent", "size", "amount", "space", "src", "source", "path", "image",
             "url", "file",
         ];
@@ -591,10 +624,6 @@ impl BaraDebugger {
                 );
             }
         }
-    }
-
-    fn check_jsx_child(&mut self, child: &JsxChild) {
-        self.check_jsx_child_in(child, None, 0);
     }
 
     fn check_jsx_child_in(

@@ -20,9 +20,17 @@ fn todo_rust_code() -> String {
 fn test_todo_example_files_exist() {
     let dir = example_dir();
     assert!(dir.is_dir(), "examples/todo_app missing");
-    for f in ["main.br", "todo.br", "todo.brx", "bara.toml"] {
+    for f in ["main.br", "todo.brx", "bara.toml"] {
         assert!(dir.join(f).exists(), "examples/todo_app/{f} missing");
     }
+    // Single-file React style: logic + UI live together in todo.brx.
+    assert!(
+        !dir.join("todo.br").exists(),
+        "todo.br must be merged into todo.brx"
+    );
+    let brx = std::fs::read_to_string(dir.join("todo.brx")).expect("read todo.brx");
+    assert!(brx.contains("type TodoApp"), "todo.brx must define its type");
+    assert!(brx.contains("view TodoApp"), "todo.brx must define its view");
 }
 
 #[test]
@@ -102,6 +110,17 @@ fn test_todo_transpile_gui_bindings() {
     );
     assert!(rust.contains(".clicked()"), "missing button click handler");
     assert!(rust.contains("ScrollArea"), "missing scroll area");
+}
+
+#[test]
+fn test_todo_inline_style_block_is_applied() {
+    // todo.brx carries an inline <style> block (no shared styles.css import);
+    // it must merge into the same global stylesheet.
+    let rust = todo_rust_code();
+    assert!(
+        rust.contains("from_rgb(9, 13, 22)"),
+        "inline <style> background must reach egui::Frame:\n{rust}"
+    );
 }
 
 #[test]

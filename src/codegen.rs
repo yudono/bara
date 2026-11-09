@@ -386,6 +386,10 @@ impl<'a> Codegen<'a> {
 
     fn emit_function(&mut self, f: &FnDef, is_method: bool) {
         self.writeln(&format!("// @line: {}", f.span.0));
+        // React lifecycle hooks keep their JS-style camelCase names.
+        if matches!(f.name.as_str(), "onMount" | "onUpdate" | "onUnmount") {
+            self.writeln("#[allow(non_snake_case)]");
+        }
         let async_prefix = if f.is_async { "async " } else { "" };
 
         let mut param_strs = Vec::new();
@@ -546,6 +550,34 @@ impl<'a> Codegen<'a> {
         self.indent_level += 1;
         self.writeln("fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {");
         self.indent_level += 1;
+
+        // `color-scheme: light` on the root panel opts the whole view into
+        // egui's light visuals (used by light designs like Solanum).
+        {
+            let mut owned: Vec<String> = Vec::new();
+            for attr in &view.root.attributes {
+                if attr.name == "class" {
+                    match &attr.value {
+                        JsxAttrValue::Lit(s) => {
+                            owned.extend(s.split_whitespace().map(|c| c.to_string()));
+                        }
+                        JsxAttrValue::Expr(e) => {
+                            self.collect_class_names_from_expr(e, &mut owned);
+                        }
+                    }
+                }
+            }
+            let root_classes: Vec<&str> = owned.iter().map(|s| s.as_str()).collect();
+            let props = css.resolve_properties(&root_classes);
+            if props
+                .get("color-scheme")
+                .map(|s| s.trim().to_lowercase())
+                .as_deref()
+                == Some("light")
+            {
+                self.writeln("ctx.set_visuals(egui::Visuals::light());");
+            }
+        }
 
         self.pending_effects.clear();
         self.in_child = false;
@@ -726,6 +758,13 @@ impl<'a> Codegen<'a> {
         let mut progress_expr: Option<String> = None;
         let mut spacer_lit: Option<f32> = None;
         let mut spacer_expr: Option<String> = None;
+        let mut tooltip_lit: Option<String> = None;
+        let mut tooltip_expr: Option<String> = None;
+        let mut title_lit: Option<String> = None;
+        let mut title_expr: Option<String> = None;
+        let mut open_expr: Option<String> = None;
+        let mut value_lit_raw: Option<String> = None;
+        let mut value_expr_raw: Option<String> = None;
 
         for attr in &elem.attributes {
             match attr.name.as_str() {
@@ -765,13 +804,36 @@ impl<'a> Codegen<'a> {
                 },
                 "value" | "progress" | "percent" => match &attr.value {
                     JsxAttrValue::Lit(s) => {
+                        value_lit_raw = Some(s.clone());
                         if let Ok(v) = s.trim().trim_end_matches('%').parse::<f32>() {
                             let v = if s.trim().ends_with('%') { v / 100.0 } else { v };
                             progress_lit = Some(if v > 1.0 { v / 100.0 } else { v });
                         }
                     }
                     JsxAttrValue::Expr(e) => {
+                        value_expr_raw = Some(self.expr_to_string(e));
                         progress_expr = Some(self.expr_to_string(e));
+                    }
+                },
+                "tooltip" => match &attr.value {
+                    JsxAttrValue::Lit(s) => {
+                        tooltip_lit = Some(s.clone());
+                    }
+                    JsxAttrValue::Expr(e) => {
+                        tooltip_expr = Some(self.expr_to_string(e));
+                    }
+                },
+                "title" => match &attr.value {
+                    JsxAttrValue::Lit(s) => {
+                        title_lit = Some(s.clone());
+                    }
+                    JsxAttrValue::Expr(e) => {
+                        title_expr = Some(self.expr_to_string(e));
+                    }
+                },
+                "open" => {
+                    if let JsxAttrValue::Expr(e) = &attr.value {
+                        open_expr = Some(self.expr_to_string(e));
                     }
                 },
                 "size" | "amount" | "space" => match &attr.value {
@@ -788,7 +850,55 @@ impl<'a> Codegen<'a> {
             }
         }
 
-        let class_refs: Vec<&str> = class_names.iter().map(|s| s.as_str()).collect();
+        // React-style inline `style={{...}}`: literal entries override the
+        // class stylesheet (merged as the last rule, so they win ties).
+        let mut inline_props: HashMap<String, String> = HashMap::new();
+        for attr in &elem.attributes {
+            if attr.name != "style" {
+                continue;
+            }
+            if let JsxAttrValue::Expr(Expr::Map(pairs, _)) = &attr.value {
+                for (k, v) in pairs {
+                    let key = match k {
+                        Expr::Ident(n, _) => n.clone(),
+                        Expr::Literal(Literal::Str(s), _) => s.clone(),
+                        _ => continue,
+                    };
+                    let val = match v {
+                        Expr::Literal(Literal::Str(s), _) => s.clone(),
+                        Expr::Literal(Literal::Int(i), _) => i.to_string(),
+                        Expr::Literal(Literal::Float(f), _) => {
+                            let s = format!("{f}");
+                            if s.contains('.') { s } else { format!("{s}.0") }
+                        }
+                        _ => continue, // dynamic values are not inlinable; use classes
+                    };
+                    inline_props.insert(
+                        crate::css_engine::normalize_prop_name(&key),
+                        val,
+                    );
+                }
+            }
+        }
+
+        // Merge into a per-element stylesheet so every getter below sees the
+        // combined (class + inline) properties with inline winning.
+        let mut owned_sheet: Option<CssStyleSheet> = None;
+        let mut owned_classes: Vec<String> = Vec::new();
+        let (css, class_refs): (&CssStyleSheet, Vec<&str>) = if inline_props.is_empty() {
+            (css, class_names.iter().map(|s| s.as_str()).collect())
+        } else {
+            let mut sheet = css.clone();
+            sheet.rules.push(crate::css_engine::CssRule {
+                selector: ".__bara_inline".to_string(),
+                properties: inline_props,
+            });
+            owned_classes = class_names.clone();
+            owned_classes.push("__bara_inline".to_string());
+            owned_sheet = Some(sheet);
+            let refs: Vec<&str> = owned_classes.iter().map(|s| s.as_str()).collect();
+            (owned_sheet.as_ref().unwrap(), refs)
+        };
 
         // React-style child component: `<Tag .../>` where Tag names a struct
         // with a view. Props are assigned, then the persisted child instance
@@ -871,7 +981,7 @@ impl<'a> Codegen<'a> {
                 self.indent_level -= 1;
                 self.writeln("});");
             }
-            "Col" | "Container" => {
+            "Col" | "Container" | "Stack" | "VStack" => {
                 let frame_opt = css.get_frame_code(&class_refs);
                 let gap_opt = css.get_spacing(&class_refs);
                 let max_w = css.get_max_width(&class_refs);
@@ -918,7 +1028,7 @@ impl<'a> Codegen<'a> {
                     self.writeln("});");
                 }
             }
-            "Row" => {
+            "Row" | "HStack" => {
                 let frame_opt = css.get_frame_code(&class_refs);
                 let gap_opt = css.get_spacing(&class_refs);
                 let max_w = css.get_max_width(&class_refs);
@@ -1038,9 +1148,20 @@ impl<'a> Codegen<'a> {
                 };
                 let content = self.jsx_children_to_rich_text_content(&elem.children);
                 let opacity = css.get_opacity(&class_refs);
-                let line = format!(
-                    "{ui_var}.label(egui::RichText::new({content}){mod_chain});"
-                );
+                let tooltip_code: Option<String> = match (&tooltip_lit, &tooltip_expr) {
+                    (Some(s), _) => Some(format!("\"{}\"", s.escape_default())),
+                    (None, Some(e)) => Some(e.clone()),
+                    _ => None,
+                };
+                let line = if let Some(tt) = &tooltip_code {
+                    format!(
+                        "{ui_var}.label(egui::RichText::new({content}){mod_chain}).on_hover_text({tt});"
+                    )
+                } else {
+                    format!(
+                        "{ui_var}.label(egui::RichText::new({content}){mod_chain});"
+                    )
+                };
                 if let Some(o) = opacity {
                     if o < 1.0 {
                         self.writeln(&format!("{ui_var}.scope(|{ui_var}| {{"));
@@ -1101,7 +1222,17 @@ impl<'a> Codegen<'a> {
                     }
                 }
                 let action = on_click_expr.unwrap_or_default();
-                self.writeln(&format!("if {add_expr}.clicked() {{"));
+                let tooltip_code: Option<String> = match (&tooltip_lit, &tooltip_expr) {
+                    (Some(s), _) => Some(format!("\"{}\"", s.escape_default())),
+                    (None, Some(e)) => Some(e.clone()),
+                    _ => None,
+                };
+                let resp_expr = if let Some(tt) = &tooltip_code {
+                    format!("{add_expr}.on_hover_text({tt})")
+                } else {
+                    add_expr
+                };
+                self.writeln(&format!("if {resp_expr}.clicked() {{"));
                 self.indent_level += 1;
                 if !action.is_empty() {
                     if let Some(for_var) = &self.jsx_for_var {
@@ -1299,6 +1430,310 @@ impl<'a> Codegen<'a> {
                     self.writeln(&format!("{ui_var}.add_space(8.0);"));
                 }
             }
+            "RadioButton" => {
+                // `bind={field}` + `value="lit"` (str fields: emitted with
+                // `.to_string()`) or `value={expr}` (used verbatim, e.g. ints).
+                let val_code: Option<String> = match (&value_lit_raw, &value_expr_raw) {
+                    (Some(s), _) => Some(format!("\"{}\".to_string()", s.escape_default())),
+                    (None, Some(e)) => Some(e.clone()),
+                    _ => None,
+                };
+                if let (Some(var), Some(val)) = (bind_var, val_code) {
+                    let label_expr = if elem.children.is_empty() {
+                        "\"\"".to_string()
+                    } else {
+                        self.jsx_children_to_rich_text_content(&elem.children)
+                    };
+                    let opacity = css.get_opacity(&class_refs);
+                    let line =
+                        format!("{ui_var}.radio_value(&mut {var}, {val}, {label_expr});");
+                    if let Some(o) = opacity {
+                        if o < 1.0 {
+                            self.writeln(&format!("{ui_var}.scope(|{ui_var}| {{"));
+                            self.indent_level += 1;
+                            self.writeln(&format!("{ui_var}.set_opacity({:.3});", o));
+                            self.writeln(&line);
+                            self.indent_level -= 1;
+                            self.writeln("});");
+                        } else {
+                            self.writeln(&line);
+                        }
+                    } else {
+                        self.writeln(&line);
+                    }
+                }
+            }
+            "Picker" | "Dropdown" | "Select" => {
+                // `bind={str_field}`; each `<Option value="v">label</Option>`
+                // child becomes a `selectable_value` row in the combo menu.
+                if let Some(var) = bind_var {
+                    let mut rows: Vec<String> = Vec::new();
+                    for child in &elem.children {
+                        if let JsxChild::Element(opt) = child {
+                            if opt.tag != "Option" {
+                                continue;
+                            }
+                            let mut oval_lit: Option<String> = None;
+                            let mut oval_expr: Option<String> = None;
+                            for a in &opt.attributes {
+                                if a.name == "value" {
+                                    match &a.value {
+                                        JsxAttrValue::Lit(s) => {
+                                            oval_lit = Some(s.clone());
+                                        }
+                                        JsxAttrValue::Expr(e) => {
+                                            oval_expr = Some(self.expr_to_string(e));
+                                        }
+                                    }
+                                }
+                            }
+                            let oval = match (&oval_lit, &oval_expr) {
+                                (Some(s), _) => {
+                                    format!("\"{}\".to_string()", s.escape_default())
+                                }
+                                (None, Some(e)) => e.clone(),
+                                _ => continue,
+                            };
+                            let olabel = if opt.children.is_empty() {
+                                match &oval_lit {
+                                    Some(s) => format!("\"{}\"", s.escape_default()),
+                                    None => "\"\"".to_string(),
+                                }
+                            } else {
+                                self.jsx_children_to_rich_text_content(&opt.children)
+                            };
+                            rows.push(format!(
+                                "{ui_var}.selectable_value(&mut {var}, {oval}, {olabel});"
+                            ));
+                        }
+                    }
+                    let opacity = css.get_opacity(&class_refs);
+                    if let Some(o) = opacity {
+                        if o < 1.0 {
+                            self.writeln(&format!("{ui_var}.scope(|{ui_var}| {{"));
+                            self.indent_level += 1;
+                            self.writeln(&format!("{ui_var}.set_opacity({:.3});", o));
+                        }
+                    }
+                    self.writeln(&format!("egui::ComboBox::from_label(\"\").selected_text({var}.clone()).show_ui({ui_var}, |{ui_var}| {{"));
+                    self.indent_level += 1;
+                    for r in rows {
+                        self.writeln(&r);
+                    }
+                    self.indent_level -= 1;
+                    self.writeln("});");
+                    if let Some(o) = opacity {
+                        if o < 1.0 {
+                            self.indent_level -= 1;
+                            self.writeln("});");
+                        }
+                    }
+                }
+            }
+            "Switch" | "Toggle" => {
+                // No native switch widget in egui 0.27: emulate with a Button
+                // showing On/Off that flips the bound bool field.
+                if let Some(var) = bind_var {
+                    let state_expr = format!("(if {var} {{ \"On\" }} else {{ \"Off\" }})");
+                    let text_code = if elem.children.is_empty() {
+                        state_expr
+                    } else {
+                        let content = self.jsx_children_to_rich_text_content(&elem.children);
+                        format!("format!(\"{{}} [{{}}]\", {content}, {state_expr})")
+                    };
+                    let mut widget = format!("egui::Button::new({text_code})");
+                    if let Some(fc) = css.get_fill_code(&class_refs) {
+                        widget = format!("{widget}.{fc}");
+                    }
+                    if let Some(sc) = css.get_stroke_code(&class_refs) {
+                        widget = format!("{widget}.{sc}");
+                    }
+                    if let Some(rc) = css.get_rounding_code(&class_refs) {
+                        widget = format!("{widget}.{rc}");
+                    }
+                    let w = css.get_width(&class_refs);
+                    let h = css.get_height(&class_refs);
+                    let add_expr = match (w, h) {
+                        (Some(w), Some(h)) => {
+                            format!("{ui_var}.add_sized(egui::vec2({w:.1}, {h:.1}), {widget})")
+                        }
+                        _ => {
+                            let mut b = widget;
+                            if let Some(w) = w {
+                                b = format!("{b}.min_size(egui::vec2({w:.1}, 0.0))");
+                            }
+                            if let Some(h) = h {
+                                b = format!("{b}.min_size(egui::vec2(0.0, {h:.1}))");
+                            }
+                            format!("{ui_var}.add({b})")
+                        }
+                    };
+                    let opacity = css.get_opacity(&class_refs);
+                    if let Some(o) = opacity {
+                        if o < 1.0 {
+                            self.writeln(&format!("{ui_var}.scope(|{ui_var}| {{"));
+                            self.indent_level += 1;
+                            self.writeln(&format!("{ui_var}.set_opacity({:.3});", o));
+                        }
+                    }
+                    let action = format!("{var} = !{var}");
+                    self.writeln(&format!("if {add_expr}.clicked() {{"));
+                    self.indent_level += 1;
+                    if let Some(for_var) = &self.jsx_for_var {
+                        let mut deferred = action.replace("self.", "s.");
+                        deferred =
+                            deferred.replace(&format!("{for_var}."), &format!("__{for_var}."));
+                        self.writeln(&format!("let __{for_var} = __{for_var}_clone.clone();"));
+                        self.writeln("__actions.push(Box::new(move |s: &mut Self| {");
+                        self.indent_level += 1;
+                        self.writeln(&format!("{deferred};"));
+                        self.indent_level -= 1;
+                        self.writeln("}));");
+                    } else {
+                        self.writeln(&format!("{action};"));
+                    }
+                    self.indent_level -= 1;
+                    self.writeln("}");
+                    if let Some(o) = opacity {
+                        if o < 1.0 {
+                            self.indent_level -= 1;
+                            self.writeln("});");
+                        }
+                    }
+                }
+            }
+            "Modal" | "Dialog" => {
+                // No `egui::Modal` in 0.27: floating dialog via `egui::Window`.
+                let title_code = match (&title_lit, &title_expr) {
+                    (Some(s), _) => format!("\"{}\"", s.escape_default()),
+                    (None, Some(e)) => e.clone(),
+                    _ => format!("\"{tag}\""),
+                };
+                let open_code = open_expr
+                    .map(|e| format!(".open(&mut {e})"))
+                    .unwrap_or_default();
+                let frame_code = css
+                    .get_frame_code(&class_refs)
+                    .map(|fc| format!(".frame({fc})"))
+                    .unwrap_or_default();
+                let gap_opt = css.get_spacing(&class_refs);
+                let opacity = css.get_opacity(&class_refs);
+                // Panels and windows take `&Context`; clone it off `ui` so this
+                // also works in `__render_as_child` (which has no `ctx` var).
+                self.writeln(&format!("let __bara_ctx = {ui_var}.ctx().clone();"));
+                self.writeln(&format!("egui::Window::new({title_code}){open_code}{frame_code}.show(&__bara_ctx, |{ui_var}| {{"));
+                self.indent_level += 1;
+                if let Some(gap) = gap_opt {
+                    self.writeln(&format!("{ui_var}.spacing_mut().item_spacing.y = {:.1};", gap));
+                }
+                if let Some(o) = opacity {
+                    if o < 1.0 {
+                        self.writeln(&format!("{ui_var}.scope(|{ui_var}| {{"));
+                        self.indent_level += 1;
+                        self.writeln(&format!("{ui_var}.set_opacity({:.3});", o));
+                    }
+                }
+                for child in &elem.children {
+                    self.emit_jsx_child(child, css, ui_var);
+                }
+                if let Some(o) = opacity {
+                    if o < 1.0 {
+                        self.indent_level -= 1;
+                        self.writeln("});");
+                    }
+                }
+                self.indent_level -= 1;
+                self.writeln("});");
+            }
+            "Spinner" | "ActivityIndicator" => {
+                let widget = if let Some(v) = spacer_lit {
+                    format!("egui::Spinner::new().size({v:.1})")
+                } else if let Some(e) = &spacer_expr {
+                    format!("egui::Spinner::new().size(({e}) as f32)")
+                } else {
+                    "egui::Spinner::new()".to_string()
+                };
+                let opacity = css.get_opacity(&class_refs);
+                let line = format!("{ui_var}.add({widget});");
+                if let Some(o) = opacity {
+                    if o < 1.0 {
+                        self.writeln(&format!("{ui_var}.scope(|{ui_var}| {{"));
+                        self.indent_level += 1;
+                        self.writeln(&format!("{ui_var}.set_opacity({:.3});", o));
+                        self.writeln(&line);
+                        self.indent_level -= 1;
+                        self.writeln("});");
+                    } else {
+                        self.writeln(&line);
+                    }
+                } else {
+                    self.writeln(&line);
+                }
+            }
+            "BottomSheet" => {
+                let frame_code = css
+                    .get_frame_code(&class_refs)
+                    .map(|fc| format!(".frame({fc})"))
+                    .unwrap_or_default();
+                let gap_opt = css.get_spacing(&class_refs);
+                let opacity = css.get_opacity(&class_refs);
+                self.writeln(&format!("let __bara_ctx = {ui_var}.ctx().clone();"));
+                self.writeln(&format!("egui::TopBottomPanel::bottom(\"bara_bottom_sheet\"){frame_code}.show(&__bara_ctx, |{ui_var}| {{"));
+                self.indent_level += 1;
+                if let Some(gap) = gap_opt {
+                    self.writeln(&format!("{ui_var}.spacing_mut().item_spacing.y = {:.1};", gap));
+                }
+                if let Some(o) = opacity {
+                    if o < 1.0 {
+                        self.writeln(&format!("{ui_var}.scope(|{ui_var}| {{"));
+                        self.indent_level += 1;
+                        self.writeln(&format!("{ui_var}.set_opacity({:.3});", o));
+                    }
+                }
+                for child in &elem.children {
+                    self.emit_jsx_child(child, css, ui_var);
+                }
+                if let Some(o) = opacity {
+                    if o < 1.0 {
+                        self.indent_level -= 1;
+                        self.writeln("});");
+                    }
+                }
+                self.indent_level -= 1;
+                self.writeln("});");
+            }
+            "Drawer" | "SideMenu" => {
+                let frame_code = css
+                    .get_frame_code(&class_refs)
+                    .map(|fc| format!(".frame({fc})"))
+                    .unwrap_or_default();
+                let gap_opt = css.get_spacing(&class_refs);
+                let opacity = css.get_opacity(&class_refs);
+                self.writeln(&format!("let __bara_ctx = {ui_var}.ctx().clone();"));
+                self.writeln(&format!("egui::SidePanel::left(\"bara_drawer_left\"){frame_code}.show(&__bara_ctx, |{ui_var}| {{"));
+                self.indent_level += 1;
+                if let Some(gap) = gap_opt {
+                    self.writeln(&format!("{ui_var}.spacing_mut().item_spacing.y = {:.1};", gap));
+                }
+                if let Some(o) = opacity {
+                    if o < 1.0 {
+                        self.writeln(&format!("{ui_var}.scope(|{ui_var}| {{"));
+                        self.indent_level += 1;
+                        self.writeln(&format!("{ui_var}.set_opacity({:.3});", o));
+                    }
+                }
+                for child in &elem.children {
+                    self.emit_jsx_child(child, css, ui_var);
+                }
+                if let Some(o) = opacity {
+                    if o < 1.0 {
+                        self.indent_level -= 1;
+                        self.writeln("});");
+                    }
+                }
+                self.indent_level -= 1;
+                self.writeln("});");
+            }
             _ => {
                 // Generic fallback container
                 self.writeln(&format!("{ui_var}.vertical(|{ui_var}| {{"));
@@ -1329,7 +1764,7 @@ impl<'a> Codegen<'a> {
         let field = child_field_name(tag, idx);
 
         const NON_PROPS: &[&str] = &[
-            "class", "bind", "onClick", "placeholder", "name", "value", "progress",
+            "class", "style", "bind", "onClick", "placeholder", "tooltip", "name", "value", "progress",
             "percent", "size", "amount", "space", "src", "source", "path", "image",
             "url", "file",
         ];

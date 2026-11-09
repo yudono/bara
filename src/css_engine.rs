@@ -147,42 +147,55 @@ pub struct Margin {
 }
 
 impl Margin {
+    /// Strict unit parser: px / rem / em suffixes or unitless zero.
+    /// Anything else (unknown units, garbage) is `None` so invalid
+    /// declarations are ignored instead of silently becoming 0.
+    fn parse_unit(s: &str) -> Option<f32> {
+        let s = s.trim();
+        if s.is_empty() {
+            return None;
+        }
+        if let Some(num) = s.strip_suffix("px") {
+            return num.parse::<f32>().ok();
+        }
+        if let Some(num) = s.strip_suffix("rem") {
+            return num.parse::<f32>().ok().map(|v| v * 16.0);
+        }
+        if s.ends_with("em") && !s.ends_with("rem") {
+            let num = s.strip_suffix("em")?;
+            return num.parse::<f32>().ok().map(|v| v * 16.0);
+        }
+        // Unitless numbers: only zero is valid CSS without a unit.
+        match s.parse::<f32>() {
+            Ok(v) if v == 0.0 => Some(0.0),
+            _ => None,
+        }
+    }
+
     pub fn parse(val: &str) -> Option<Self> {
         let parts: Vec<&str> = val.split_whitespace().collect();
-        let parse_unit = |s: &str| -> f32 {
-            let s = s.trim();
-            if let Some(num) = s.strip_suffix("px") {
-                num.parse::<f32>().unwrap_or(0.0)
-            } else if let Some(num) = s.strip_suffix("rem") {
-                num.parse::<f32>().unwrap_or(0.0) * 16.0
-            } else if let Some(num) = s.strip_suffix("em") {
-                num.parse::<f32>().unwrap_or(0.0) * 16.0
-            } else {
-                s.parse::<f32>().unwrap_or(0.0)
-            }
-        };
 
         match parts.len() {
             1 => {
-                let m = parse_unit(parts[0]);
+                let m = Self::parse_unit(parts[0])?;
                 Some(Margin { top: m, right: m, bottom: m, left: m })
             }
             2 => {
-                let y = parse_unit(parts[0]);
-                let x = parse_unit(parts[1]);
+                let y = Self::parse_unit(parts[0])?;
+                let x = Self::parse_unit(parts[1])?;
                 Some(Margin { top: y, right: x, bottom: y, left: x })
             }
             3 => {
-                let top = parse_unit(parts[0]);
-                let x = parse_unit(parts[1]);
-                let bottom = parse_unit(parts[2]);
+                let top = Self::parse_unit(parts[0])?;
+                let x = Self::parse_unit(parts[1])?;
+                let bottom = Self::parse_unit(parts[2])?;
                 Some(Margin { top, right: x, bottom, left: x })
             }
             4 => {
-                let top = parse_unit(parts[0]);
-                let right = parse_unit(parts[1]);
-                let bottom = parse_unit(parts[2]);
-                let left = parse_unit(parts[3]);
+                let top = Self::parse_unit(parts[0])?;
+                let right = Self::parse_unit(parts[1])?;
+                let bottom = Self::parse_unit(parts[2])?;
+                let left = Self::parse_unit(parts[3])?;
                 Some(Margin { top, right, bottom, left })
             }
             _ => None,
@@ -211,27 +224,39 @@ pub struct Stroke {
 }
 
 impl Stroke {
+    /// Parses `border` shorthand (`<width> <style-ignored> <color>`).
+    /// Returns `None` when no usable width or color is found, so garbage
+    /// like `border: nonsense` is ignored instead of becoming black.
     pub fn parse(val: &str) -> Option<Self> {
         let parts: Vec<&str> = val.split_whitespace().collect();
         let mut width = 1.0f32;
+        let mut width_seen = false;
         let mut color = Color { r: 0, g: 0, b: 0, a: 255 };
+        let mut color_seen = false;
 
         for p in parts {
             if let Some(num) = p.strip_suffix("rem") {
                 if let Ok(w) = num.parse::<f32>() {
                     width = w * 16.0;
+                    width_seen = true;
                 }
             } else if let Some(num) = p.strip_suffix("em") {
                 if let Ok(w) = num.parse::<f32>() {
                     width = w * 16.0;
+                    width_seen = true;
                 }
             } else if let Some(num) = p.strip_suffix("px") {
                 if let Ok(w) = num.parse::<f32>() {
                     width = w;
+                    width_seen = true;
                 }
             } else if let Some(c) = Color::parse(p) {
                 color = c;
+                color_seen = true;
             }
+        }
+        if !width_seen && !color_seen {
+            return None;
         }
         Some(Stroke { width, color })
     }
@@ -245,6 +270,60 @@ impl Stroke {
 pub struct CssRule {
     pub selector: String,
     pub properties: HashMap<String, String>,
+}
+
+/// Normalize a property name: `backgroundColor` (React inline-style form)
+/// becomes `background-color`. Already-kebab names pass through.
+pub fn normalize_prop_name(name: &str) -> String {
+    let mut out = String::new();
+    for c in name.chars() {
+        if c.is_ascii_uppercase() {
+            out.push('-');
+            out.push(c.to_ascii_lowercase());
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// Every property name the engine understands (parsed + mapped, or parsed
+/// with a documented fallback). Used for `style={{...}}` validation.
+pub fn known_properties() -> Vec<&'static str> {
+    vec![
+        "background", "background-color", "background-image", "background-position",
+        "background-size", "background-repeat", "background-attachment",
+        "background-blend-mode", "background-clip", "color", "font", "font-family",
+        "font-size", "font-weight", "font-style", "font-variant", "line-height",
+        "text-align", "text-decoration", "text-transform", "text-indent",
+        "text-shadow", "text-overflow", "letter-spacing", "word-spacing",
+        "white-space", "word-break", "overflow-wrap", "word-wrap", "writing-mode",
+        "padding", "padding-top", "padding-right", "padding-bottom", "padding-left",
+        "margin", "margin-top", "margin-right", "margin-bottom", "margin-left",
+        "box-sizing", "aspect-ratio", "width", "min-width", "max-width", "height",
+        "min-height", "max-height", "display", "float", "clear", "visibility",
+        "overflow", "overflow-x", "overflow-y", "flex", "flex-direction",
+        "flex-wrap", "flex-flow", "flex-grow", "flex-shrink", "flex-basis",
+        "justify-content", "align-items", "align-content", "align-self", "gap",
+        "row-gap", "column-gap", "order", "grid", "grid-template-columns",
+        "grid-template-rows", "grid-template-areas", "grid-auto-columns",
+        "grid-auto-rows", "grid-auto-flow", "grid-column", "grid-row", "grid-area",
+        "justify-items", "justify-self", "position", "top", "right", "bottom",
+        "left", "inset", "z-index", "border", "border-top", "border-right",
+        "border-bottom", "border-left", "border-width", "border-style",
+        "border-color", "border-radius", "outline", "outline-offset", "box-shadow",
+        "transition", "transition-property", "transition-duration",
+        "transition-timing-function", "transition-delay", "animation",
+        "animation-name", "animation-duration", "animation-timing-function",
+        "animation-delay", "animation-iteration-count", "animation-direction",
+        "animation-fill-mode", "transform", "transform-origin", "opacity",
+        "filter", "backdrop-filter", "clip-path", "mask", "cursor",
+        "pointer-events", "user-select", "appearance", "resize", "list-style",
+        "list-style-type", "list-style-position", "list-style-image",
+        "border-collapse", "border-spacing", "content", "object-fit",
+        "object-position", "scroll-behavior", "scroll-snap-type",
+        "scroll-snap-align", "overscroll-behavior", "color-scheme",
+    ]
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -621,6 +700,162 @@ impl CssStyleSheet {
             .get("justify-content")
             .cloned()
             .or_else(|| props.get("justify_content").cloned())
+    }
+
+    /// Raw property lookup (lowercased name). Parsed but not necessarily wired
+    /// to codegen — used to document fallback properties (ignored by emit).
+    pub fn get_raw_property(&self, classes: &[&str], name: &str) -> Option<String> {
+        let props = self.resolve_properties(classes);
+        props.get(&name.to_lowercase()).cloned()
+    }
+
+    /// `min-width` in px (parsed but currently ignored by codegen; fallback).
+    pub fn get_min_width(&self, classes: &[&str]) -> Option<f32> {
+        let props = self.resolve_properties(classes);
+        props.get("min-width").and_then(|v| Self::parse_size(v))
+    }
+
+    /// `min-height` in px (parsed but currently ignored by codegen; fallback).
+    pub fn get_min_height(&self, classes: &[&str]) -> Option<f32> {
+        let props = self.resolve_properties(classes);
+        props.get("min-height").and_then(|v| Self::parse_size(v))
+    }
+
+    /// Margin longhands in px (parsed but currently ignored by `get_frame_code`,
+    /// which only reads the `margin` shorthand; fallback: ignored).
+    pub fn get_margin_top(&self, classes: &[&str]) -> Option<f32> {
+        let props = self.resolve_properties(classes);
+        props.get("margin-top").and_then(|v| Self::parse_size(v))
+    }
+    pub fn get_margin_right(&self, classes: &[&str]) -> Option<f32> {
+        let props = self.resolve_properties(classes);
+        props.get("margin-right").and_then(|v| Self::parse_size(v))
+    }
+    pub fn get_margin_bottom(&self, classes: &[&str]) -> Option<f32> {
+        let props = self.resolve_properties(classes);
+        props.get("margin-bottom").and_then(|v| Self::parse_size(v))
+    }
+    pub fn get_margin_left(&self, classes: &[&str]) -> Option<f32> {
+        let props = self.resolve_properties(classes);
+        props.get("margin-left").and_then(|v| Self::parse_size(v))
+    }
+
+    /// Padding longhands in px (parsed but currently ignored by `get_frame_code`,
+    /// which only reads the `padding` shorthand; fallback: ignored).
+    pub fn get_padding_top(&self, classes: &[&str]) -> Option<f32> {
+        let props = self.resolve_properties(classes);
+        props.get("padding-top").and_then(|v| Self::parse_size(v))
+    }
+    pub fn get_padding_right(&self, classes: &[&str]) -> Option<f32> {
+        let props = self.resolve_properties(classes);
+        props.get("padding-right").and_then(|v| Self::parse_size(v))
+    }
+    pub fn get_padding_bottom(&self, classes: &[&str]) -> Option<f32> {
+        let props = self.resolve_properties(classes);
+        props.get("padding-bottom").and_then(|v| Self::parse_size(v))
+    }
+    pub fn get_padding_left(&self, classes: &[&str]) -> Option<f32> {
+        let props = self.resolve_properties(classes);
+        props.get("padding-left").and_then(|v| Self::parse_size(v))
+    }
+
+    /// Effective margin: `margin` shorthand with longhand overrides applied.
+    /// Parsed for future wiring; codegen currently uses only the shorthand.
+    pub fn get_effective_margin(&self, classes: &[&str]) -> Option<Margin> {
+        let props = self.resolve_properties(classes);
+        let mut base = props.get("margin").and_then(|v| Margin::parse(v))?;
+        if let Some(v) = props.get("margin-top").and_then(|v| Self::parse_size(v)) {
+            base.top = v;
+        }
+        if let Some(v) = props.get("margin-right").and_then(|v| Self::parse_size(v)) {
+            base.right = v;
+        }
+        if let Some(v) = props.get("margin-bottom").and_then(|v| Self::parse_size(v)) {
+            base.bottom = v;
+        }
+        if let Some(v) = props.get("margin-left").and_then(|v| Self::parse_size(v)) {
+            base.left = v;
+        }
+        Some(base)
+    }
+
+    /// Effective padding: `padding` shorthand with longhand overrides applied.
+    /// Parsed for future wiring; codegen currently uses only the shorthand.
+    pub fn get_effective_padding(&self, classes: &[&str]) -> Option<Margin> {
+        let props = self.resolve_properties(classes);
+        let mut base = props.get("padding").and_then(|v| Margin::parse(v))?;
+        if let Some(v) = props.get("padding-top").and_then(|v| Self::parse_size(v)) {
+            base.top = v;
+        }
+        if let Some(v) = props.get("padding-right").and_then(|v| Self::parse_size(v)) {
+            base.right = v;
+        }
+        if let Some(v) = props.get("padding-bottom").and_then(|v| Self::parse_size(v)) {
+            base.bottom = v;
+        }
+        if let Some(v) = props.get("padding-left").and_then(|v| Self::parse_size(v)) {
+            base.left = v;
+        }
+        Some(base)
+    }
+
+    /// `display` raw value (parsed, ignored by codegen; fallback).
+    pub fn get_display(&self, classes: &[&str]) -> Option<String> {
+        let props = self.resolve_properties(classes);
+        props.get("display").cloned()
+    }
+
+    /// `position` raw value (parsed, ignored by codegen; fallback).
+    pub fn get_position(&self, classes: &[&str]) -> Option<String> {
+        let props = self.resolve_properties(classes);
+        props.get("position").cloned()
+    }
+
+    /// `visibility` raw value (parsed, ignored by codegen; fallback).
+    pub fn get_visibility(&self, classes: &[&str]) -> Option<String> {
+        let props = self.resolve_properties(classes);
+        props.get("visibility").cloned()
+    }
+
+    /// `overflow` (or `overflow-x`/`overflow-y` if `overflow` unset).
+    /// Parsed, ignored by codegen; Scroll always uses vertical area.
+    pub fn get_overflow(&self, classes: &[&str]) -> Option<String> {
+        let props = self.resolve_properties(classes);
+        props
+            .get("overflow")
+            .cloned()
+            .or_else(|| props.get("overflow-x").cloned())
+            .or_else(|| props.get("overflow-y").cloned())
+    }
+
+    /// `box-sizing` raw value (parsed, ignored by codegen; fallback).
+    pub fn get_box_sizing(&self, classes: &[&str]) -> Option<String> {
+        let props = self.resolve_properties(classes);
+        props.get("box-sizing").cloned()
+    }
+
+    /// `aspect-ratio` raw value (parsed, ignored by codegen; fallback).
+    pub fn get_aspect_ratio(&self, classes: &[&str]) -> Option<String> {
+        let props = self.resolve_properties(classes);
+        props.get("aspect-ratio").cloned()
+    }
+
+    /// `text-align` raw value (parsed, ignored by codegen; fallback).
+    pub fn get_text_align(&self, classes: &[&str]) -> Option<String> {
+        let props = self.resolve_properties(classes);
+        props.get("text-align").cloned()
+    }
+
+    /// `flex-direction` raw value (parsed, ignored by codegen; fallback).
+    pub fn get_flex_direction(&self, classes: &[&str]) -> Option<String> {
+        let props = self.resolve_properties(classes);
+        props.get("flex-direction").cloned()
+    }
+
+    /// `flex-wrap` raw value (parsed, ignored by codegen; fallback).
+    pub fn get_flex_wrap(&self, classes: &[&str]) -> Option<String> {
+        let props = self.resolve_properties(classes);
+        props.get("flex-wrap").cloned()
     }
 
     /// Parse a CSS length into logical pixels. Supports px, pt, %, rem, em and bare numbers.

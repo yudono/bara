@@ -3,6 +3,24 @@
 All notable changes to the Bara compiler & CLI are documented here.
 Versioning follows SemVer (`bara version` reads `Cargo.toml`).
 
+## [0.1.5] - 2026-11-09
+
+### Added
+- Inline React-style `style={{...}}` per-widget overrides (camelCase or
+  kebab-case keys, literal values, wins over class styles; `W0007` on
+  unknown keys).
+- Preflight contract documented: unstyled widgets inherit the active egui
+  theme (no forced colors); `color-scheme: light` selects the light base.
+- `#[allow(non_snake_case)]` on generated `onMount`/`onUpdate`/`onUnmount`
+  so React lifecycle naming never warns.
+- 40-test CSS suite incl. preflight guarantees; COMPONENT.md + CSS.md
+  component/property matrices.
+
+### Fixed
+- `Margin::parse` / `Stroke::parse` are strict: invalid declarations are
+  ignored instead of silently becoming zero/black.
+- `opacity` modulates stroke color, consistent with fill/text.
+
 ## [0.1.4] - 2026-11-09
 
 ### Changed / Added
@@ -14,9 +32,41 @@ Versioning follows SemVer (`bara version` reads `Cargo.toml`).
 - `onUpdate` auto-repaint: a viewed type defining `onUpdate` gets
   `request_repaint_after(250ms)` for per-frame logic; types without it stay
   event-driven.
-- New example `examples/solanum_rewrite/` (pomodoro timer rewrite:
+- New example `../Solanum_bara/` (standalone pomodoro timer rewrite:
   Timer/Settings/About components, `LapType` enum + `match`, frame-based
-  ticking via `onUpdate`, explicit `styles.css`).
+  ticking via `onUpdate`, light theme via `color-scheme: light`, explicit
+  `styles.css`).
+
+### Added (components)
+- New native tags: `RadioButton`, `Picker`/`Dropdown`/`Select` (with
+  `<Option value="..">` children), `Switch`/`Toggle` (emulated),
+  `Modal`/`Dialog`, `Spinner`/`ActivityIndicator`, `BottomSheet`,
+  `Drawer`/`SideMenu`, `Stack`/`VStack`/`HStack` aliases, `tooltip="..."`
+  attribute on Text/Button. See `COMPONENT.md` for the full matrix and
+  the documented skips (`ZStack`, video, webview, gestures...).
+- New tests: `tests/css_box_model_test.rs`, `tests/css_flexbox_test.rs`,
+  `tests/css_typography_test.rs`, `tests/css_background_border_test.rs`,
+  `tests/css_effects_test.rs`, `tests/css_layout_position_test.rs`,
+  `tests/css_misc_test.rs`, `tests/bara_composition_test.rs`,
+  `tests/brui_extra_tags_test.rs`.
+  See `CSS.md` for per-property support status and reasons.
+
+### Fixed (CSS correctness)
+- Invalid declarations are now ignored instead of silently becoming
+  zero/black: strict unit parsing for margin/padding (`Margin::parse`
+  returns `None` on garbage; unitless non-zero rejected) and strict
+  `Stroke::parse` (needs a real width or color).
+- `opacity` now modulates stroke colors too, consistent with fill/text.
+- `color-scheme: light` on the root panel class opts a view into
+  `egui::Visuals::light()`.
+- Single-file React components: `type` + `view` (+ optional inline
+  `<style>`) may live together in one `.brx`; all GUI examples merged to
+  this shape (`todo.brx`, `dashboard.brx` + `pages/**`, `demo.brx`).
+- Inline `style={{...}}` per-widget overrides (React syntax, camelCase or
+  kebab-case keys, literal values, `W0007` on unknown keys); wins over
+  class styles.
+- Preflight contract documented: unstyled widgets inherit the active egui
+  theme (no forced dark colors); invalid CSS is ignored, never coerced.
 
 ## [0.1.3] - 2026-11-09
 

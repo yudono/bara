@@ -1,4 +1,23 @@
-use LoginForm
+
+type LoginForm =
+    username: str
+    password: str
+    remember_me = false
+    logged_in = false
+    error_msg = ""
+
+    login() =>
+        if username == "" =>
+            error_msg = "Username is required"
+        else =>
+            logged_in = true
+            error_msg = ""
+
+    logout() =>
+        logged_in = false
+        username = ""
+        password = ""
+        error_msg = ""
 
 view LoginForm =>
     <Panel class="screen">

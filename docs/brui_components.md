@@ -1,7 +1,43 @@
 # BRUI Components
 
-BRUI renders Bara `view` blocks (`.brx` files and Brui XML layouts) to native
-`egui`/`eframe` widgets at compile time. A view binds to a declared type:
+BRUI renders Bara views (`.brx` files and Brui XML layouts) to native
+`egui`/`eframe` widgets at compile time.
+
+## Single-file components (React-style `.brx`)
+
+A `.brx` file is a complete React-style module: `type` (state + methods),
+`view` (JSX), and an optional inline `<style>` block live together — no
+mandatory `.br` split. `todo.brx`, `dashboard.brx`, and every `pages/**`
+file follow this shape:
+
+```jsx
+use eframe
+use egui
+
+type Counter =
+    count: int = 0
+    bump() =>
+        count = count + 1
+
+view Counter =>
+    <Panel class="screen">
+        <Button class="btn" onClick={bump()}>Count: {count}</Button>
+    </Panel>
+
+<style>
+    .btn { background: #0284c7; color: #ffffff; border-radius: 6px; }
+</style>
+```
+
+`use` imports, `enum`/`type`/`fn` items, and `raw_rust { ... }` escape
+hatches are all legal at the top level of a `.brx` file; the transpiler
+merges every project file into one program before analysis, so order and
+file boundaries never matter for resolution. The shared-`styles.css`
+pattern (`use "styles.css"`) and inline `<style>` blocks merge into the
+same global sheet — use shared files for multi-page apps and inline
+blocks for single-file widgets.
+
+A view binds to a declared type:
 
 ```jsx
 use MyApp
@@ -12,9 +48,13 @@ view MyApp =>
     </Panel>
 ```
 
-The validator accepts 16 tags (`src/debugger.rs`). Ten have dedicated native
-codegen (`src/codegen.rs`); the rest fall through to a generic vertical
-container (a plain `ui.vertical(...)` wrapper with no extra widget).
+The validator accepts 31 tags (`src/debugger.rs`), each with a dedicated
+native codegen arm (`src/codegen.rs`): `Container` is an alias of `Col`,
+`TextField` an alias of `Input`, and `Stack`/`VStack`/`HStack` alias the
+column/row layouts. Anything else is treated as either a
+React-style child component (when a matching `type` + `view` exists) or a
+generic vertical container (a plain `ui.vertical(...)` wrapper) with an
+`E0003` "Unknown Brui UI component" warning.
 
 ## Layout containers
 
@@ -27,7 +67,9 @@ container (a plain `ui.vertical(...)` wrapper with no extra widget).
 | `Separator` | — | `ui.separator()` |
 
 `Wrap`, `Container`, `Spacer`, `Image`, `Progress` are accepted by the
-validator but currently render through the generic vertical-container fallback.
+validator and have dedicated native arms (`Wrap` → `horizontal_wrapped`,
+`Image` → placeholder label, `Progress` → `egui::ProgressBar`,
+`Spacer` → `add_space`).
 
 ## Content and input widgets
 
@@ -39,6 +81,27 @@ validator but currently render through the generic vertical-container fallback.
 | `TextField` | `bind={field}`, `placeholder="..."` | Accepted alias of `Input` (same single-line editor) |
 | `Checkbox` | `bind={field}` | `ui.checkbox(&mut field, "")` |
 | `Slider` | `bind={field}` | `egui::Slider::new(&mut field, 0..=100)` |
+
+## Extended components
+
+Beyond the base set, Brui ships React-Native-style widgets with native
+egui codegen. All support `class` (frame/gap/opacity) unless noted:
+
+| Tag | Attributes | Native output |
+|---|---|---|
+| `RadioButton` | `bind={field}`, `value="..."`, children label | `ui.radio_value(&mut field, value, label)` |
+| `Picker` / `Dropdown` / `Select` | `bind={field}`, `<Option value="v">label</Option>` children | `egui::ComboBox` + `ui.selectable_value` rows |
+| `Switch` / `Toggle` | `bind={field}`, children label | Button showing On/Off that flips the bool field |
+| `Modal` / `Dialog` | `title="..."`, `open={flag}` (optional), children | `egui::Window` shown while the flag is true |
+| `Spinner` / `ActivityIndicator` | `size="24"` (optional) | `egui::Spinner::new()` |
+| `BottomSheet` | children | `egui::TopBottomPanel::bottom` sheet |
+| `Drawer` / `SideMenu` | children | `egui::SidePanel::left` drawer |
+| `Stack` / `VStack` | `class` | Same layout as `Col` |
+| `HStack` | `class` | Same layout as `Row` |
+
+`tooltip="..."` is supported on `Text` and `Button` (hover text via
+`on_hover_text`). `ZStack` has no declarative equivalent in immediate-mode
+egui and is intentionally unsupported (see `COMPONENT.md`).
 
 ## Attributes
 
@@ -99,12 +162,27 @@ view DashboardApp =>
   in tree order and executed at the end of `update()` (after paint, React
   semantics). Hooks must be top-level — nesting inside `{for}`/`{if}` is
   rejected (`E0006`), same rule as React.
-- **Lifecycle**: `onMount()` runs once after the first render, `onUpdate()`
-  runs at the end of later frames, `onUnmount()` runs via generated
-  `impl Drop`. They work for the running app view and for embedded children
-  (`__render_as_child`). Define `onUpdate()` for per-frame logic (timers,
-  clocks); Bara then calls `request_repaint_after(250ms)` so the view keeps
-  ticking — types without `onUpdate` stay event-driven.
+- **Lifecycle — complete frame model**: every frame, egui calls the running
+  view's `update()`, which Bara generates as:
+  1. Render the JSX tree top-down (props are assigned to child instances
+     just before each `<Child/>` renders).
+  2. Run collected `useEffect` bodies in tree order — each only if this is
+     the first frame or its dependency signature changed.
+  3. Run `onUpdate()` on every frame *except* the first; run `onMount()`
+     once instead on the first frame. The mount flag flips at the end.
+  4. If the type defines `onUpdate`, request the next frame via
+     `request_repaint_after(250ms)` so per-frame logic (timers, clocks)
+     keeps ticking without input; types without `onUpdate` only re-render
+     on interaction (event-driven, zero idle cost).
+  5. `onUnmount()` runs from the generated `impl Drop` when the app (or an
+     embedded child instance with the whole parent) is dropped.
+  Embedded children (`<Tag/>` → `__render_as_child`) run the same
+  render → effects → mount/update epilogue against their *own* persisted
+  state, so child `onMount`/`onUpdate` also fire. Parent methods can drive
+  children imperatively (`ChildType.method()`); parents observe child state
+  declaratively (`ChildType.field`, including inside `useEffect` deps and
+  `{if}` conditions). In headless/test mode the window is skipped but the
+  same update path executes.
 - **Parent-child tree**: parents compose `<OverviewPage/>`, `<UsersPage/>`,
   `<LoginForm/>`, `<RegisterForm/>` and switch them conditionally; each child
   keeps its own state (see `examples/dashboard_gui/` — sidebar shell with

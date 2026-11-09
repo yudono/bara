@@ -1,9 +1,13 @@
 use bara::analyzer::Analyzer;
-use bara::ast::Item;
 use bara::codegen::Codegen;
 use bara::css_engine::CssStyleSheet;
 use bara::lexer::Lexer;
 use bara::parser::Parser;
+
+fn parse_ok(src: &str) -> bara::ast::Program {
+    let tokens = Lexer::new(src).tokenize().expect("lex");
+    Parser::new(tokens).parse_program().expect("parse")
+}
 
 fn transpile_ok(src: &str) -> String {
     let tokens = Lexer::new(src).tokenize().expect("lex");
@@ -356,6 +360,95 @@ fn css_opacity_maps_to_set_opacity() {
         ".t { color: #ffffff; opacity: 0.5; }",
     ));
     assert!(rust.contains("set_opacity(0.500)"), "{rust}");
+}
+
+#[test]
+fn css_inline_style_overrides_class() {
+    // React-style: style={{...}} wins over the class stylesheet.
+    let rust = transpile_ok(&view_shell(
+        r##"<Text class="t" style={{color: "#00ff00"}}>hi</Text>"##,
+        ".t { color: #ff0000; }",
+    ));
+    assert!(rust.contains("from_rgb(0, 255, 0)"), "{rust}");
+    assert!(!rust.contains("from_rgb(255, 0, 0)"), "{rust}");
+}
+
+#[test]
+fn css_inline_style_camel_case_keys() {
+    let rust = transpile_ok(&view_shell(
+        r##"<Text class="t" style={{fontSize: 20, backgroundColor: "#111827"}}>hi</Text>"##,
+        ".t { color: #ffffff; }",
+    ));
+    assert!(rust.contains("size(20.0)"), "{rust}");
+    // Inline background on a Text leaf has no frame; must still compile.
+    syn::parse_file(&rust).expect("syn");
+}
+
+#[test]
+fn css_inline_style_on_button_applies() {
+    let rust = transpile_ok(&view_shell(
+        r##"<Button style={{color: "#ffffff", backgroundColor: "#0284c7"}}>Go</Button>"##,
+        "",
+    ));
+    assert!(rust.contains("from_rgb(255, 255, 255)"), "{rust}");
+    assert!(rust.contains("fill(egui::Color32::from_rgb(2, 132, 199))"), "{rust}");
+}
+
+#[test]
+fn css_inline_unknown_key_warns() {
+    let prog = parse_ok(&view_shell(
+        r##"<Text class="t" style={{colr: "#ffffff"}}>hi</Text>"##,
+        ".t { color: #ffffff; }",
+    ));
+    let mut dbg = bara::debugger::BaraDebugger::new();
+    dbg.inspect(&prog, None);
+    assert!(
+        dbg.diagnostics.iter().any(|d| d.code == "W0007"),
+        "expected W0007, got {:?}",
+        dbg.diagnostics
+    );
+}
+
+#[test]
+fn css_color_scheme_light_opts_into_light_visuals() {
+    let rust = transpile_ok(&view_shell(
+        r#"<Text class="t">hi</Text>"#,
+        ".screen { color-scheme: light; background: #ffffff; } .t { color: #1f2937; }",
+    ));
+    assert!(rust.contains("egui::Visuals::light()"), "{rust}");
+}
+
+#[test]
+fn css_no_color_scheme_means_default_dark_visuals() {
+    let rust = transpile_ok(&view_shell(
+        r#"<Text class="t">hi</Text>"#,
+        ".screen { background: #0b0f19; } .t { color: #ffffff; }",
+    ));
+    assert!(!rust.contains("Visuals::light"), "{rust}");
+}
+
+#[test]
+fn css_preflight_unstyled_widgets_have_no_forced_colors() {
+    // Bara preflight: unstyled widgets inherit the active egui theme
+    // (neutral). No hardcoded dark fills may appear without a matching class.
+    let rust = transpile_ok(&view_shell(
+        "<Button>Go</Button>",
+        "",
+    ));
+    assert!(!rust.contains(".fill("), "{rust}");
+    assert!(!rust.contains("from_rgb"), "{rust}");
+    assert!(rust.contains("egui::Button::new"), "{rust}");
+}
+
+#[test]
+fn css_preflight_unstyled_panel_has_no_frame() {
+    let rust = transpile_ok(&view_shell(
+        r#"<Text class="t">hi</Text>"#,
+        ".other { color: #ffffff; }",
+    ));
+    // Panel has no matching class -> plain CentralPanel, no frame.
+    assert!(rust.contains("egui::CentralPanel::default()"), "{rust}");
+    assert!(!rust.contains(".frame("), "{rust}");
 }
 
 #[test]

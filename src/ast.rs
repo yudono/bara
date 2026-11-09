@@ -450,8 +450,8 @@ pub fn is_hidden_field(name: &str) -> bool {
     name.starts_with("__")
 }
 
-/// True for native Brui container/control tags (as opposed to component tags
-/// that name a user `type` + `view` pair).
+/// True for native Brui tags (as opposed to component tags that name a user
+/// `type` + `view` pair). Must stay in sync with the validator's tag list.
 pub fn is_builtin_brui_tag(tag: &str) -> bool {
     matches!(
         tag,
@@ -471,6 +471,23 @@ pub fn is_builtin_brui_tag(tag: &str) -> bool {
             | "Image"
             | "Progress"
             | "Spacer"
+            | "RadioButton"
+            | "Picker"
+            | "Dropdown"
+            | "Select"
+            | "Option"
+            | "Switch"
+            | "Toggle"
+            | "Modal"
+            | "Dialog"
+            | "Spinner"
+            | "ActivityIndicator"
+            | "BottomSheet"
+            | "Drawer"
+            | "SideMenu"
+            | "Stack"
+            | "VStack"
+            | "HStack"
     )
 }
 
