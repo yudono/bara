@@ -1,0 +1,25 @@
+use UsersPage
+
+view UsersPage =>
+    <Panel class="screen">
+        <Col class="card">
+            <Text class="card_title">{title}</Text>
+            <Text class="card_subtitle">Every node in the fleet at a glance</Text>
+            <Row class="filter_box">
+                <Input class="input_field" bind={filter} placeholder="Filter nodes..." />
+            </Row>
+            <Scroll class="log_scroll">
+                <Col class="log_list">
+                    {for u in users =>
+                        <Row class="user_row">
+                            <Text class="user_name">{u.name}</Text>
+                            <Text class="log_status">{u.status}</Text>
+                            <Button class="btn_danger" onClick={remove_user(u.id)}>
+                                Remove
+                            </Button>
+                        </Row>
+                    }
+                </Col>
+            </Scroll>
+        </Col>
+    </Panel>

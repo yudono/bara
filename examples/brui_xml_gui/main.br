@@ -1,0 +1,4 @@
+use XmlDemoApp
+use "styles.css"
+
+app.run("Brui XML Demo", width = 500, height = 400)

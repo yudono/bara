@@ -23,9 +23,10 @@ impl Default for AnalyzerConfig {
 }
 
 pub struct Analyzer {
-    config: AnalyzerConfig,
-    structs: HashMap<String, TypeDef>,
-    functions: HashMap<String, FnDef>,
+    pub config: AnalyzerConfig,
+    pub structs: HashMap<String, TypeDef>,
+    pub enums: HashMap<String, EnumDef>,
+    pub functions: HashMap<String, FnDef>,
     pub needs_bara_dyn: bool,
     pub main_is_async: bool,
     pub main_has_try: bool,
@@ -36,6 +37,7 @@ impl Analyzer {
         Self {
             config: AnalyzerConfig::default(),
             structs: HashMap::new(),
+            enums: HashMap::new(),
             functions: HashMap::new(),
             needs_bara_dyn: false,
             main_is_async: false,
@@ -44,28 +46,36 @@ impl Analyzer {
     }
 
     pub fn analyze_program(&mut self, program: &mut Program) -> Result<(), String> {
-        // Collect imports into known_crates
+        // Collect imports into known_crates (only external crates with path > 1)
         for item in &program.items {
             if let Item::Use(u) = item {
-                if let Some(first) = u.path.first() {
-                    self.config.known_crates.insert(first.clone());
+                if u.path.len() > 1 {
+                    if let Some(first) = u.path.first() {
+                        self.config.known_crates.insert(first.clone());
+                    }
                 }
             }
         }
 
-        // Pass 1A: Collect struct definitions & infer field types
+        // Pass 1A: Collect struct & enum definitions & infer field types
         for item in &mut program.items {
-            if let Item::Type(t) = item {
-                for f in &mut t.fields {
-                    if f.ty.is_none() {
-                        if let Some(def_val) = &f.default_val {
-                            f.ty = Some(self.infer_expr_type(def_val));
-                        } else {
-                            f.ty = Some(TypeAnnotation::Str);
+            match item {
+                Item::Type(t) => {
+                    for f in &mut t.fields {
+                        if f.ty.is_none() {
+                            if let Some(def_val) = &f.default_val {
+                                f.ty = Some(self.infer_expr_type(def_val));
+                            } else {
+                                f.ty = Some(TypeAnnotation::Str);
+                            }
                         }
                     }
+                    self.structs.insert(t.name.clone(), t.clone());
                 }
-                self.structs.insert(t.name.clone(), t.clone());
+                Item::Enum(e) => {
+                    self.enums.insert(e.name.clone(), e.clone());
+                }
+                _ => {}
             }
         }
 
@@ -252,6 +262,17 @@ impl Analyzer {
                     let mut while_locals = local_vars.clone();
                     self.resolve_fields_in_block(body, field_names, method_names, &mut while_locals, field_accessed, field_mutated);
                 }
+                Stmt::Match { expr, arms, .. } => {
+                    self.resolve_fields_in_expr(expr, field_names, method_names, local_vars, field_accessed, field_mutated);
+                    for arm in arms {
+                        let arm_locals = local_vars.clone();
+                        self.resolve_fields_in_expr(&mut arm.pattern, field_names, method_names, &arm_locals, field_accessed, field_mutated);
+                        if let Some(guard) = &mut arm.guard {
+                            self.resolve_fields_in_expr(guard, field_names, method_names, &arm_locals, field_accessed, field_mutated);
+                        }
+                        self.resolve_fields_in_expr(&mut arm.body, field_names, method_names, &arm_locals, field_accessed, field_mutated);
+                    }
+                }
                 _ => {}
             }
         }
@@ -367,6 +388,22 @@ impl Analyzer {
             Expr::Block(b, _) => {
                 let mut blk_locals = local_vars.clone();
                 self.resolve_fields_in_block(b, field_names, method_names, &mut blk_locals, field_accessed, field_mutated);
+            }
+            Expr::Tuple(items, _) => {
+                for item in items {
+                    self.resolve_fields_in_expr(item, field_names, method_names, local_vars, field_accessed, field_mutated);
+                }
+            }
+            Expr::Match { expr: target, arms, .. } => {
+                self.resolve_fields_in_expr(target, field_names, method_names, local_vars, field_accessed, field_mutated);
+                for arm in arms {
+                    let arm_locals = local_vars.clone();
+                    self.resolve_fields_in_expr(&mut arm.pattern, field_names, method_names, &arm_locals, field_accessed, field_mutated);
+                    if let Some(guard) = &mut arm.guard {
+                        self.resolve_fields_in_expr(guard, field_names, method_names, &arm_locals, field_accessed, field_mutated);
+                    }
+                    self.resolve_fields_in_expr(&mut arm.body, field_names, method_names, &arm_locals, field_accessed, field_mutated);
+                }
             }
             _ => {}
         }
@@ -739,6 +776,16 @@ impl Analyzer {
                     self.lower_expr(cond, &remaining_uses)?;
                     self.analyze_block(body, &var_decl_seen, false)?;
                 }
+                Stmt::Match { expr, arms, .. } => {
+                    self.lower_expr(expr, &remaining_uses)?;
+                    for arm in arms {
+                        self.lower_expr(&mut arm.pattern, &remaining_uses)?;
+                        if let Some(guard) = &mut arm.guard {
+                            self.lower_expr(guard, &remaining_uses)?;
+                        }
+                        self.lower_expr(&mut arm.body, &remaining_uses)?;
+                    }
+                }
                 _ => {}
             }
         }
@@ -765,6 +812,8 @@ impl Analyzer {
                     } else {
                         declared.insert(name.clone());
                     }
+                } else if let Some(root) = self.get_root_ident(target) {
+                    mutated.insert(root.to_string());
                 }
                 self.collect_mutations_in_expr(value, mutated);
             }
@@ -806,6 +855,16 @@ impl Analyzer {
                     self.collect_mutations_in_stmt(s, declared, mutated);
                 }
             }
+            Stmt::Match { expr, arms, .. } => {
+                self.collect_mutations_in_expr(expr, mutated);
+                for arm in arms {
+                    self.collect_mutations_in_expr(&arm.pattern, mutated);
+                    if let Some(guard) = &arm.guard {
+                        self.collect_mutations_in_expr(guard, mutated);
+                    }
+                    self.collect_mutations_in_expr(&arm.body, mutated);
+                }
+            }
             Stmt::Return(Some(val), _) => {
                 self.collect_mutations_in_expr(val, mutated);
             }
@@ -814,12 +873,91 @@ impl Analyzer {
     }
 
     fn collect_mutations_in_expr(&self, expr: &Expr, mutated: &mut HashSet<String>) {
-        if let Expr::MethodCall { receiver, method, .. } = expr {
-            if is_mutating_method(method) {
-                if let Expr::Ident(name, _) = receiver.as_ref() {
-                    mutated.insert(name.clone());
+        match expr {
+            Expr::MethodCall { receiver, method, args, .. } => {
+                let is_mutating = is_mutating_method(method)
+                    || self.structs.values().any(|t| {
+                        t.methods
+                            .iter()
+                            .any(|m| m.name == *method && m.receiver == ReceiverKind::MutSelf)
+                    });
+                if is_mutating {
+                    if let Some(root) = self.get_root_ident(receiver) {
+                        mutated.insert(root.to_string());
+                    }
+                }
+                self.collect_mutations_in_expr(receiver, mutated);
+                for a in args {
+                    self.collect_mutations_in_expr(a, mutated);
                 }
             }
+            Expr::Assign { target, value, .. } => {
+                if let Some(root) = self.get_root_ident(target) {
+                    mutated.insert(root.to_string());
+                }
+                self.collect_mutations_in_expr(target, mutated);
+                self.collect_mutations_in_expr(value, mutated);
+            }
+            Expr::Binary { left, right, .. } | Expr::Pipe { left, right, .. } => {
+                self.collect_mutations_in_expr(left, mutated);
+                self.collect_mutations_in_expr(right, mutated);
+            }
+            Expr::Unary { expr: inner, .. }
+            | Expr::Try(inner, _)
+            | Expr::Go(inner, _)
+            | Expr::Clone(inner, _)
+            | Expr::Borrow(inner, _, _)
+            | Expr::Cast { expr: inner, .. }
+            | Expr::SafeNav { object: inner, .. } => {
+                self.collect_mutations_in_expr(inner, mutated);
+            }
+            Expr::Index { collection, index, .. } => {
+                self.collect_mutations_in_expr(collection, mutated);
+                self.collect_mutations_in_expr(index, mutated);
+            }
+            Expr::Call { callee, args, .. } => {
+                self.collect_mutations_in_expr(callee, mutated);
+                for a in args {
+                    self.collect_mutations_in_expr(a, mutated);
+                }
+            }
+            Expr::Ternary { cond, then_expr, else_expr, .. } => {
+                self.collect_mutations_in_expr(cond, mutated);
+                self.collect_mutations_in_expr(then_expr, mutated);
+                self.collect_mutations_in_expr(else_expr, mutated);
+            }
+            Expr::List(items, _) => {
+                for item in items {
+                    self.collect_mutations_in_expr(item, mutated);
+                }
+            }
+            Expr::Tuple(items, _) => {
+                for item in items {
+                    self.collect_mutations_in_expr(item, mutated);
+                }
+            }
+            Expr::Match { expr: target, arms, .. } => {
+                self.collect_mutations_in_expr(target, mutated);
+                for arm in arms {
+                    self.collect_mutations_in_expr(&arm.pattern, mutated);
+                    if let Some(guard) = &arm.guard {
+                        self.collect_mutations_in_expr(guard, mutated);
+                    }
+                    self.collect_mutations_in_expr(&arm.body, mutated);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn get_root_ident<'a>(&self, expr: &'a Expr) -> Option<&'a str> {
+        match expr {
+            Expr::Ident(name, _) => Some(name.as_str()),
+            Expr::Index { collection, .. } => self.get_root_ident(collection),
+            Expr::SafeNav { object, .. } => self.get_root_ident(object),
+            Expr::MemberAccess { object, .. } => self.get_root_ident(object),
+            Expr::PathAccess { segments, .. } => segments.first().map(|s| s.as_str()),
+            _ => None,
         }
     }
 
@@ -868,6 +1006,16 @@ impl Analyzer {
                 self.collect_used_vars_in_expr(cond, used);
                 for s in &body.stmts {
                     self.collect_used_vars_in_stmt(s, used);
+                }
+            }
+            Stmt::Match { expr, arms, .. } => {
+                self.collect_used_vars_in_expr(expr, used);
+                for arm in arms {
+                    self.collect_used_vars_in_expr(&arm.pattern, used);
+                    if let Some(guard) = &arm.guard {
+                        self.collect_used_vars_in_expr(guard, used);
+                    }
+                    self.collect_used_vars_in_expr(&arm.body, used);
                 }
             }
             _ => {}
@@ -937,6 +1085,21 @@ impl Analyzer {
             Expr::Block(b, _) => {
                 for s in &b.stmts {
                     self.collect_used_vars_in_stmt(s, used);
+                }
+            }
+            Expr::Tuple(elements, _) => {
+                for el in elements {
+                    self.collect_used_vars_in_expr(el, used);
+                }
+            }
+            Expr::Match { expr: target, arms, .. } => {
+                self.collect_used_vars_in_expr(target, used);
+                for arm in arms {
+                    self.collect_used_vars_in_expr(&arm.pattern, used);
+                    if let Some(guard) = &arm.guard {
+                        self.collect_used_vars_in_expr(guard, used);
+                    }
+                    self.collect_used_vars_in_expr(&arm.body, used);
                 }
             }
             _ => {}
@@ -1054,6 +1217,44 @@ impl Analyzer {
                 };
                 return Ok(());
             }
+
+            // Auto-borrowing for method arguments
+            let mut matched_params: Option<Vec<Param>> = None;
+            for t in self.structs.values() {
+                if let Some(m) = t.methods.iter().find(|m| m.name == *method) {
+                    matched_params = Some(m.params.clone());
+                    break;
+                }
+            }
+
+            if let Some(params) = matched_params {
+                for (idx, arg) in args.iter_mut().enumerate() {
+                    if idx < params.len() {
+                        let p = &params[idx];
+                        if let Expr::Ident(arg_name, arg_span) = arg.clone() {
+                            match p.ownership {
+                                Some(ParamOwnership::MutRef) => {
+                                    *arg = Expr::Borrow(Box::new(Expr::Ident(arg_name, arg_span)), true, arg_span);
+                                }
+                                Some(ParamOwnership::Ref) => {
+                                    let is_copy = matches!(
+                                        p.ty,
+                                        Some(TypeAnnotation::Int | TypeAnnotation::Float | TypeAnnotation::Bool)
+                                    );
+                                    if !is_copy {
+                                        *arg = Expr::Borrow(Box::new(Expr::Ident(arg_name, arg_span)), false, arg_span);
+                                    }
+                                }
+                                Some(ParamOwnership::Value) | None => {
+                                    if remaining_uses.contains(&arg_name) {
+                                        *arg = Expr::Clone(Box::new(Expr::Ident(arg_name, arg_span)), arg_span);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         // 5. Call site injection: Auto-borrowing (&, &mut) and last-use .clone()
@@ -1075,7 +1276,13 @@ impl Analyzer {
                                         *arg = Expr::Borrow(Box::new(Expr::Ident(arg_name, arg_span)), true, arg_span);
                                     }
                                     Some(ParamOwnership::Ref) => {
-                                        *arg = Expr::Borrow(Box::new(Expr::Ident(arg_name, arg_span)), false, arg_span);
+                                        let is_copy = matches!(
+                                            p.ty,
+                                            Some(TypeAnnotation::Int | TypeAnnotation::Float | TypeAnnotation::Bool)
+                                        );
+                                        if !is_copy {
+                                            *arg = Expr::Borrow(Box::new(Expr::Ident(arg_name, arg_span)), false, arg_span);
+                                        }
                                     }
                                     Some(ParamOwnership::Value) | None => {
                                         // Last-use check: if arg_name is used later in caller scope, clone it!
@@ -1119,8 +1326,33 @@ impl Analyzer {
             | Expr::DynWrap { expr: inner, .. } => {
                 self.lower_expr(inner, remaining_uses)?;
             }
-            Expr::MemberAccess { object, .. } | Expr::SafeNav { object, .. } => {
+            Expr::MemberAccess { object, member, span } => {
+                if let Some(prefix) = self.get_path_prefix(object) {
+                    *expr = Expr::PathAccess {
+                        segments: vec![prefix, member.clone()],
+                        span: *span,
+                    };
+                } else {
+                    self.lower_expr(object, remaining_uses)?;
+                }
+            }
+            Expr::SafeNav { object, .. } => {
                 self.lower_expr(object, remaining_uses)?;
+            }
+            Expr::Tuple(elements, _) => {
+                for el in elements {
+                    self.lower_expr(el, remaining_uses)?;
+                }
+            }
+            Expr::Match { expr: target, arms, .. } => {
+                self.lower_expr(target, remaining_uses)?;
+                for arm in arms {
+                    self.lower_expr(&mut arm.pattern, remaining_uses)?;
+                    if let Some(guard) = &mut arm.guard {
+                        self.lower_expr(guard, remaining_uses)?;
+                    }
+                    self.lower_expr(&mut arm.body, remaining_uses)?;
+                }
             }
             Expr::Map(pairs, _) => {
                 for (k, v) in pairs {
@@ -1142,6 +1374,7 @@ impl Analyzer {
             Expr::Ident(name, _) => {
                 if self.config.known_crates.contains(name)
                     || self.structs.contains_key(name)
+                    || self.enums.contains_key(name)
                     || name.chars().next().map_or(false, |c| c.is_uppercase())
                 {
                     Some(name.clone())
@@ -1212,6 +1445,16 @@ impl Analyzer {
                 self.scan_try_async_expr(cond, has_try, is_async);
                 for s in &body.stmts {
                     self.scan_try_async_stmt(s, has_try, is_async);
+                }
+            }
+            Stmt::Match { expr, arms, .. } => {
+                self.scan_try_async_expr(expr, has_try, is_async);
+                for arm in arms {
+                    self.scan_try_async_expr(&arm.pattern, has_try, is_async);
+                    if let Some(guard) = &arm.guard {
+                        self.scan_try_async_expr(guard, has_try, is_async);
+                    }
+                    self.scan_try_async_expr(&arm.body, has_try, is_async);
                 }
             }
             _ => {}
@@ -1285,6 +1528,21 @@ impl Analyzer {
             Expr::Block(b, _) => {
                 for s in &b.stmts {
                     self.scan_try_async_stmt(s, has_try, is_async);
+                }
+            }
+            Expr::Tuple(elements, _) => {
+                for el in elements {
+                    self.scan_try_async_expr(el, has_try, is_async);
+                }
+            }
+            Expr::Match { expr: target, arms, .. } => {
+                self.scan_try_async_expr(target, has_try, is_async);
+                for arm in arms {
+                    self.scan_try_async_expr(&arm.pattern, has_try, is_async);
+                    if let Some(guard) = &arm.guard {
+                        self.scan_try_async_expr(guard, has_try, is_async);
+                    }
+                    self.scan_try_async_expr(&arm.body, has_try, is_async);
                 }
             }
             _ => {}
@@ -1426,6 +1684,16 @@ impl Analyzer {
                 }
             }
             Expr::DynWrap { .. } => TypeAnnotation::Dyn,
+            Expr::Tuple(elements, _) => {
+                TypeAnnotation::Tuple(elements.iter().map(|e| self.infer_expr_type(e)).collect())
+            }
+            Expr::Match { arms, .. } => {
+                if let Some(first) = arms.first() {
+                    self.infer_expr_type(&first.body)
+                } else {
+                    TypeAnnotation::Inferred
+                }
+            }
             _ => TypeAnnotation::Inferred,
         }
     }

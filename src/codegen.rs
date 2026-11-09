@@ -1,3 +1,4 @@
+use std::collections::{HashMap, HashSet};
 use crate::analyzer::Analyzer;
 use crate::ast::*;
 use crate::css_engine::CssStyleSheet;
@@ -6,6 +7,8 @@ pub struct Codegen<'a> {
     analyzer: &'a Analyzer,
     output: String,
     indent_level: usize,
+    jsx_for_var: Option<String>,
+    struct_defs: HashMap<String, TypeDef>,
 }
 
 impl<'a> Codegen<'a> {
@@ -14,6 +17,8 @@ impl<'a> Codegen<'a> {
             analyzer,
             output: String::new(),
             indent_level: 0,
+            jsx_for_var: None,
+            struct_defs: HashMap::new(),
         }
     }
 
@@ -34,6 +39,13 @@ impl<'a> Codegen<'a> {
     pub fn generate(&mut self, program: &Program) -> String {
         self.output.clear();
 
+        self.struct_defs.clear();
+        for item in &program.items {
+            if let Item::Type(t) = item {
+                self.struct_defs.insert(t.name.clone(), t.clone());
+            }
+        }
+
         // 1. Module attributes
         self.writeln("#![allow(unused_imports, unused_mut, unused_variables, dead_code, unused_parens)]");
         self.writeln("");
@@ -52,17 +64,58 @@ impl<'a> Codegen<'a> {
             }
         }
 
+        // 3.5 Module declarations
+        for item in &program.items {
+            if let Item::Mod(m) = item {
+                self.writeln(&format!("// @line: {}", m.span.0));
+                let pub_prefix = if m.is_pub { "pub " } else { "" };
+                self.writeln(&format!("{pub_prefix}mod {};", m.name));
+            }
+        }
+
         // 4. User imports
+        let known_external_crates = [
+            "std", "core", "alloc", "tokio", "serde", "serde_json", "egui", "eframe", "anyhow", "thiserror",
+        ];
+        let mut internal_names = HashSet::new();
+        internal_names.insert("brui".to_string());
+        for item in &program.items {
+            match item {
+                Item::Type(t) => {
+                    internal_names.insert(t.name.clone());
+                }
+                Item::Enum(e) => {
+                    internal_names.insert(e.name.clone());
+                }
+                Item::View(v) => {
+                    internal_names.insert(v.type_name.clone());
+                }
+                _ => {}
+            }
+        }
+
         for item in &program.items {
             if let Item::Use(u) = item {
-                let path = u.path.join("::");
-                if path == "brui" || path == "TodoApp" {
+                // Explicit stylesheet imports (use "styles.css" / use styles.css /
+                // use styles) are resolved at transpile time into StyleBlocks and
+                // must never be emitted as Rust `use` items.
+                if crate::cargo_bridge::is_stylesheet_use(&u.path) {
                     continue;
                 }
+                let path = u.path.join("::");
+                if u.path.len() == 1 {
+                    let first = &u.path[0];
+                    if internal_names.contains(first)
+                        || !known_external_crates.contains(&first.as_str())
+                    {
+                        continue;
+                    }
+                }
+                let pub_prefix = if u.is_pub { "pub " } else { "" };
                 if let Some(alias) = &u.alias {
-                    self.writeln(&format!("use {path} as {alias};"));
+                    self.writeln(&format!("{pub_prefix}use {path} as {alias};"));
                 } else {
-                    self.writeln(&format!("use {path};"));
+                    self.writeln(&format!("{pub_prefix}use {path};"));
                 }
             }
         }
@@ -74,6 +127,13 @@ impl<'a> Codegen<'a> {
                 self.writeln(&format!("// @line: {}", span.0));
                 self.writeln(code);
                 self.writeln("");
+            }
+        }
+
+        // 5.5 Enums
+        for item in &program.items {
+            if let Item::Enum(e) = item {
+                self.emit_enum(e);
             }
         }
 
@@ -148,6 +208,25 @@ impl<'a> Codegen<'a> {
         self.writeln("            BaraDyn::None => write!(f, \"None\"),");
         self.writeln("        }");
         self.writeln("    }");
+        self.writeln("}");
+        self.writeln("");
+    }
+
+    fn emit_enum(&mut self, e: &EnumDef) {
+        self.writeln(&format!("// @line: {}", e.span.0));
+        self.writeln("#[derive(Debug, Clone, PartialEq)]");
+        let pub_prefix = if e.is_pub { "pub " } else { "pub " };
+        self.writeln(&format!("{pub_prefix}enum {} {{", e.name));
+        self.indent_level += 1;
+        for v in &e.variants {
+            if v.fields.is_empty() {
+                self.writeln(&format!("{},", v.name));
+            } else {
+                let f_strs: Vec<String> = v.fields.iter().map(|f| f.to_string()).collect();
+                self.writeln(&format!("{}({}),", v.name, f_strs.join(", ")));
+            }
+        }
+        self.indent_level -= 1;
         self.writeln("}");
         self.writeln("");
     }
@@ -436,11 +515,17 @@ impl<'a> Codegen<'a> {
     ) {
         let tag = elem.tag.as_str();
 
-        // Extract class attribute
+        // Extract class / binding / widget attributes
         let mut class_names: Vec<String> = Vec::new();
         let mut on_click_expr: Option<String> = None;
         let mut bind_var: Option<String> = None;
         let mut placeholder: Option<String> = None;
+        let mut image_src: Option<String> = None;
+        let mut image_src_expr: Option<String> = None;
+        let mut progress_lit: Option<f32> = None;
+        let mut progress_expr: Option<String> = None;
+        let mut spacer_lit: Option<f32> = None;
+        let mut spacer_expr: Option<String> = None;
 
         for attr in &elem.attributes {
             match attr.name.as_str() {
@@ -470,6 +555,35 @@ impl<'a> Codegen<'a> {
                         placeholder = Some(s.clone());
                     }
                 }
+                "src" | "source" | "path" | "image" | "url" | "file" => match &attr.value {
+                    JsxAttrValue::Lit(s) => {
+                        image_src = Some(s.clone());
+                    }
+                    JsxAttrValue::Expr(e) => {
+                        image_src_expr = Some(self.expr_to_string(e));
+                    }
+                },
+                "value" | "progress" | "percent" => match &attr.value {
+                    JsxAttrValue::Lit(s) => {
+                        if let Ok(v) = s.trim().trim_end_matches('%').parse::<f32>() {
+                            let v = if s.trim().ends_with('%') { v / 100.0 } else { v };
+                            progress_lit = Some(if v > 1.0 { v / 100.0 } else { v });
+                        }
+                    }
+                    JsxAttrValue::Expr(e) => {
+                        progress_expr = Some(self.expr_to_string(e));
+                    }
+                },
+                "size" | "amount" | "space" => match &attr.value {
+                    JsxAttrValue::Lit(s) => {
+                        if let Ok(v) = s.trim().trim_end_matches("px").parse::<f32>() {
+                            spacer_lit = Some(v);
+                        }
+                    }
+                    JsxAttrValue::Expr(e) => {
+                        spacer_expr = Some(self.expr_to_string(e));
+                    }
+                },
                 _ => {}
             }
         }
@@ -484,19 +598,36 @@ impl<'a> Codegen<'a> {
                 } else {
                     String::new()
                 };
+                let max_w = css.get_max_width(&class_refs);
+                let max_h = css.get_max_height(&class_refs);
+                let opacity = css.get_opacity(&class_refs);
                 self.writeln(&format!(
                     "egui::CentralPanel::default(){frame_str}.show({ctx_var}, |{ui_var}| {{"
                 ));
                 self.indent_level += 1;
+                if let Some(w) = max_w {
+                    self.writeln(&format!("{ui_var}.set_max_width({:.1});", w));
+                }
+                if let Some(h) = max_h {
+                    self.writeln(&format!("{ui_var}.set_max_height({:.1});", h));
+                }
+                if let Some(o) = opacity {
+                    if o < 1.0 {
+                        self.writeln(&format!("{ui_var}.set_opacity({:.3});", o));
+                    }
+                }
                 for child in &elem.children {
                     self.emit_jsx_child(child, css, ui_var);
                 }
                 self.indent_level -= 1;
                 self.writeln("});");
             }
-            "Col" => {
+            "Col" | "Container" => {
                 let frame_opt = css.get_frame_code(&class_refs);
                 let gap_opt = css.get_spacing(&class_refs);
+                let max_w = css.get_max_width(&class_refs);
+                let max_h = css.get_max_height(&class_refs);
+                let opacity = css.get_opacity(&class_refs);
                 if let Some(fc) = &frame_opt {
                     self.writeln(&format!("{fc}.show({ui_var}, |{ui_var}| {{"));
                     self.indent_level += 1;
@@ -505,6 +636,17 @@ impl<'a> Codegen<'a> {
                 self.indent_level += 1;
                 if let Some(gap) = gap_opt {
                     self.writeln(&format!("{ui_var}.spacing_mut().item_spacing.y = {:.1};", gap));
+                }
+                if let Some(w) = max_w {
+                    self.writeln(&format!("{ui_var}.set_max_width({:.1});", w));
+                }
+                if let Some(h) = max_h {
+                    self.writeln(&format!("{ui_var}.set_max_height({:.1});", h));
+                }
+                if let Some(o) = opacity {
+                    if o < 1.0 {
+                        self.writeln(&format!("{ui_var}.set_opacity({:.3});", o));
+                    }
                 }
                 for child in &elem.children {
                     self.emit_jsx_child(child, css, ui_var);
@@ -519,6 +661,9 @@ impl<'a> Codegen<'a> {
             "Row" => {
                 let frame_opt = css.get_frame_code(&class_refs);
                 let gap_opt = css.get_spacing(&class_refs);
+                let max_w = css.get_max_width(&class_refs);
+                let max_h = css.get_max_height(&class_refs);
+                let opacity = css.get_opacity(&class_refs);
                 if let Some(fc) = &frame_opt {
                     self.writeln(&format!("{fc}.show({ui_var}, |{ui_var}| {{"));
                     self.indent_level += 1;
@@ -527,6 +672,50 @@ impl<'a> Codegen<'a> {
                 self.indent_level += 1;
                 if let Some(gap) = gap_opt {
                     self.writeln(&format!("{ui_var}.spacing_mut().item_spacing.x = {:.1};", gap));
+                }
+                if let Some(w) = max_w {
+                    self.writeln(&format!("{ui_var}.set_max_width({:.1});", w));
+                }
+                if let Some(h) = max_h {
+                    self.writeln(&format!("{ui_var}.set_max_height({:.1});", h));
+                }
+                if let Some(o) = opacity {
+                    if o < 1.0 {
+                        self.writeln(&format!("{ui_var}.set_opacity({:.3});", o));
+                    }
+                }
+                for child in &elem.children {
+                    self.emit_jsx_child(child, css, ui_var);
+                }
+                self.indent_level -= 1;
+                self.writeln("});");
+                if frame_opt.is_some() {
+                    self.indent_level -= 1;
+                    self.writeln("});");
+                }
+            }
+            "Wrap" => {
+                let frame_opt = css.get_frame_code(&class_refs);
+                let gap_opt = css.get_spacing(&class_refs);
+                let max_w = css.get_max_width(&class_refs);
+                let opacity = css.get_opacity(&class_refs);
+                if let Some(fc) = &frame_opt {
+                    self.writeln(&format!("{fc}.show({ui_var}, |{ui_var}| {{"));
+                    self.indent_level += 1;
+                }
+                self.writeln(&format!("{ui_var}.horizontal_wrapped(|{ui_var}| {{"));
+                self.indent_level += 1;
+                if let Some(gap) = gap_opt {
+                    self.writeln(&format!("{ui_var}.spacing_mut().item_spacing.x = {:.1};", gap));
+                    self.writeln(&format!("{ui_var}.spacing_mut().item_spacing.y = {:.1};", gap));
+                }
+                if let Some(w) = max_w {
+                    self.writeln(&format!("{ui_var}.set_max_width({:.1});", w));
+                }
+                if let Some(o) = opacity {
+                    if o < 1.0 {
+                        self.writeln(&format!("{ui_var}.set_opacity({:.3});", o));
+                    }
                 }
                 for child in &elem.children {
                     self.emit_jsx_child(child, css, ui_var);
@@ -540,11 +729,21 @@ impl<'a> Codegen<'a> {
             }
             "Scroll" => {
                 let max_h = css.get_max_height(&class_refs).unwrap_or(300.0);
+                let max_w = css.get_max_width(&class_refs);
+                let opacity = css.get_opacity(&class_refs);
                 self.writeln(&format!(
                     "egui::ScrollArea::vertical().max_height({:.1}).show({ui_var}, |{ui_var}| {{",
                     max_h
                 ));
                 self.indent_level += 1;
+                if let Some(w) = max_w {
+                    self.writeln(&format!("{ui_var}.set_max_width({:.1});", w));
+                }
+                if let Some(o) = opacity {
+                    if o < 1.0 {
+                        self.writeln(&format!("{ui_var}.set_opacity({:.3});", o));
+                    }
+                }
                 for child in &elem.children {
                     self.emit_jsx_child(child, css, ui_var);
                 }
@@ -559,9 +758,24 @@ impl<'a> Codegen<'a> {
                     format!(".{}", mods.join("."))
                 };
                 let content = self.jsx_children_to_rich_text_content(&elem.children);
-                self.writeln(&format!(
+                let opacity = css.get_opacity(&class_refs);
+                let line = format!(
                     "{ui_var}.label(egui::RichText::new({content}){mod_chain});"
-                ));
+                );
+                if let Some(o) = opacity {
+                    if o < 1.0 {
+                        self.writeln(&format!("{ui_var}.scope(|{ui_var}| {{"));
+                        self.indent_level += 1;
+                        self.writeln(&format!("{ui_var}.set_opacity({:.3});", o));
+                        self.writeln(&line);
+                        self.indent_level -= 1;
+                        self.writeln("});");
+                    } else {
+                        self.writeln(&line);
+                    }
+                } else {
+                    self.writeln(&line);
+                }
             }
             "Button" => {
                 let mods = css.get_rich_text_modifiers(&class_refs);
@@ -571,41 +785,198 @@ impl<'a> Codegen<'a> {
                     format!(".{}", mods.join("."))
                 };
                 let content = self.jsx_children_to_rich_text_content(&elem.children);
+                let opacity = css.get_opacity(&class_refs);
+                if let Some(o) = opacity {
+                    if o < 1.0 {
+                        self.writeln(&format!("{ui_var}.scope(|{ui_var}| {{"));
+                        self.indent_level += 1;
+                        self.writeln(&format!("{ui_var}.set_opacity({:.3});", o));
+                    }
+                }
                 let action = on_click_expr.unwrap_or_default();
                 self.writeln(&format!(
                     "if {ui_var}.add(egui::Button::new(egui::RichText::new({content}){mod_chain})).clicked() {{"
                 ));
                 self.indent_level += 1;
                 if !action.is_empty() {
-                    self.writeln(&format!("{action};"));
+                    if let Some(for_var) = &self.jsx_for_var {
+                        let mut deferred = action.replace("self.", "s.");
+                        deferred = deferred.replace(&format!("{for_var}."), &format!("__{for_var}."));
+                        self.writeln(&format!("let __{for_var} = __{for_var}_clone.clone();"));
+                        self.writeln("__actions.push(Box::new(move |s: &mut Self| {");
+                        self.indent_level += 1;
+                        self.writeln(&format!("{deferred};"));
+                        self.indent_level -= 1;
+                        self.writeln("}));");
+                    } else {
+                        self.writeln(&format!("{action};"));
+                    }
                 }
                 self.indent_level -= 1;
                 self.writeln("}");
+                if let Some(o) = opacity {
+                    if o < 1.0 {
+                        self.indent_level -= 1;
+                        self.writeln("});");
+                    }
+                }
             }
-            "Input" => {
+            "Input" | "TextField" => {
                 if let Some(var) = bind_var {
                     let hint = if let Some(ph) = placeholder {
                         format!(".hint_text(\"{}\")", ph.escape_default())
                     } else {
                         String::new()
                     };
-                    self.writeln(&format!(
+                    let opacity = css.get_opacity(&class_refs);
+                    let line = format!(
                         "{ui_var}.add(egui::TextEdit::singleline(&mut {var}){hint});"
-                    ));
+                    );
+                    if let Some(o) = opacity {
+                        if o < 1.0 {
+                            self.writeln(&format!("{ui_var}.scope(|{ui_var}| {{"));
+                            self.indent_level += 1;
+                            self.writeln(&format!("{ui_var}.set_opacity({:.3});", o));
+                            self.writeln(&line);
+                            self.indent_level -= 1;
+                            self.writeln("});");
+                        } else {
+                            self.writeln(&line);
+                        }
+                    } else {
+                        self.writeln(&line);
+                    }
                 }
             }
             "Checkbox" => {
                 if let Some(var) = bind_var {
-                    self.writeln(&format!("{ui_var}.checkbox(&mut {var}, \"\");"));
+                    let label_expr = if elem.children.is_empty() {
+                        "\"\"".to_string()
+                    } else {
+                        self.jsx_children_to_rich_text_content(&elem.children)
+                    };
+                    let opacity = css.get_opacity(&class_refs);
+                    let line = format!("{ui_var}.checkbox(&mut {var}, {label_expr});");
+                    if let Some(o) = opacity {
+                        if o < 1.0 {
+                            self.writeln(&format!("{ui_var}.scope(|{ui_var}| {{"));
+                            self.indent_level += 1;
+                            self.writeln(&format!("{ui_var}.set_opacity({:.3});", o));
+                            self.writeln(&line);
+                            self.indent_level -= 1;
+                            self.writeln("});");
+                        } else {
+                            self.writeln(&line);
+                        }
+                    } else {
+                        self.writeln(&line);
+                    }
                 }
             }
             "Slider" => {
                 if let Some(var) = bind_var {
-                    self.writeln(&format!("{ui_var}.add(egui::Slider::new(&mut {var}, 0..=100));"));
+                    let opacity = css.get_opacity(&class_refs);
+                    let line = format!("{ui_var}.add(egui::Slider::new(&mut {var}, 0..=100));");
+                    if let Some(o) = opacity {
+                        if o < 1.0 {
+                            self.writeln(&format!("{ui_var}.scope(|{ui_var}| {{"));
+                            self.indent_level += 1;
+                            self.writeln(&format!("{ui_var}.set_opacity({:.3});", o));
+                            self.writeln(&line);
+                            self.indent_level -= 1;
+                            self.writeln("});");
+                        } else {
+                            self.writeln(&line);
+                        }
+                    } else {
+                        self.writeln(&line);
+                    }
                 }
             }
             "Separator" => {
                 self.writeln(&format!("{ui_var}.separator();"));
+            }
+            "Image" => {
+                let mods = css.get_rich_text_modifiers(&class_refs);
+                let mod_chain = if mods.is_empty() {
+                    String::new()
+                } else {
+                    format!(".{}", mods.join("."))
+                };
+                let opacity = css.get_opacity(&class_refs);
+                let line = if let Some(src_expr) = &image_src_expr {
+                    format!(
+                        "{ui_var}.label(egui::RichText::new(format!(\"[Image: {{}}]\", {src_expr})){mod_chain});"
+                    )
+                } else {
+                    let label_text = if let Some(src) = &image_src {
+                        format!("[Image: {}]", src)
+                    } else if !elem.children.is_empty() {
+                        let inner = self.jsx_children_to_rich_text_content(&elem.children);
+                        let _ = inner;
+                        "[Image]".to_string()
+                    } else {
+                        "[Image]".to_string()
+                    };
+                    format!(
+                        "{ui_var}.label(egui::RichText::new(\"{}\"){mod_chain});",
+                        label_text.escape_default()
+                    )
+                };
+                if let Some(o) = opacity {
+                    if o < 1.0 {
+                        self.writeln(&format!("{ui_var}.scope(|{ui_var}| {{"));
+                        self.indent_level += 1;
+                        self.writeln(&format!("{ui_var}.set_opacity({:.3});", o));
+                        self.writeln(&line);
+                        self.indent_level -= 1;
+                        self.writeln("});");
+                    } else {
+                        self.writeln(&line);
+                    }
+                } else {
+                    self.writeln(&line);
+                }
+            }
+            "Progress" => {
+                let opacity = css.get_opacity(&class_refs);
+                let bar_expr = if let Some(var) = &bind_var {
+                    format!(
+                        "{{ let __p = ({var} as f32); let __p = if __p > 1.0 {{ __p / 100.0 }} else {{ __p }}; {ui_var}.add(egui::ProgressBar::new(__p).show_percentage()); }}"
+                    )
+                } else if let Some(pe) = &progress_expr {
+                    format!(
+                        "{{ let __p = ({pe} as f32); let __p = if __p > 1.0 {{ __p / 100.0 }} else {{ __p }}; {ui_var}.add(egui::ProgressBar::new(__p).show_percentage()); }}"
+                    )
+                } else {
+                    let v = progress_lit.unwrap_or(0.5).clamp(0.0, 1.0);
+                    format!("{ui_var}.add(egui::ProgressBar::new({v:.3}).show_percentage());")
+                };
+                if let Some(o) = opacity {
+                    if o < 1.0 {
+                        self.writeln(&format!("{ui_var}.scope(|{ui_var}| {{"));
+                        self.indent_level += 1;
+                        self.writeln(&format!("{ui_var}.set_opacity({:.3});", o));
+                        self.writeln(&bar_expr);
+                        self.indent_level -= 1;
+                        self.writeln("});");
+                    } else {
+                        self.writeln(&bar_expr);
+                    }
+                } else {
+                    self.writeln(&bar_expr);
+                }
+            }
+            "Spacer" => {
+                if let Some(se) = &spacer_expr {
+                    self.writeln(&format!("{ui_var}.add_space(({se}) as f32);"));
+                } else if let Some(v) = spacer_lit {
+                    self.writeln(&format!("{ui_var}.add_space({:.1});", v));
+                } else if let Some(w) = css.get_max_width(&class_refs).or_else(|| css.get_max_height(&class_refs)) {
+                    self.writeln(&format!("{ui_var}.add_space({:.1});", w));
+                } else {
+                    self.writeln(&format!("{ui_var}.add_space(8.0);"));
+                }
             }
             _ => {
                 // Generic fallback container
@@ -652,11 +1023,21 @@ impl<'a> Codegen<'a> {
             }
             JsxChild::For { item, iter, body } => {
                 let iter_str = self.expr_to_string(iter);
+                let prev_for = self.jsx_for_var.clone();
+                self.jsx_for_var = Some(item.clone());
+                self.writeln("let mut __actions: Vec<Box<dyn FnOnce(&mut Self)>> = Vec::new();");
                 self.writeln(&format!("for {item} in &mut {iter_str} {{"));
                 self.indent_level += 1;
+                self.writeln(&format!("let __{item}_clone = {item}.clone();"));
                 self.emit_jsx_child(body, css, ui_var);
                 self.indent_level -= 1;
                 self.writeln("}");
+                self.writeln("for act in __actions {");
+                self.indent_level += 1;
+                self.writeln("act(self);");
+                self.indent_level -= 1;
+                self.writeln("}");
+                self.jsx_for_var = prev_for;
             }
         }
     }
@@ -743,13 +1124,17 @@ impl<'a> Codegen<'a> {
         if let Some(target_app) = app_run_target {
             self.writeln("fn main() -> Result<(), eframe::Error> {");
             self.indent_level += 1;
+            self.writeln("let headless = std::env::var(\"BARA_HEADLESS\").is_ok() || std::env::args().any(|a| a == \"--headless\");");
+            self.writeln("#[cfg(target_os = \"linux\")]");
+            self.writeln("let headless = headless || (std::env::var(\"DISPLAY\").is_err() && std::env::var(\"WAYLAND_DISPLAY\").is_err());");
+            self.writeln(&format!("if headless {{ println!(\"Bara GUI '{{}}': headless mode, skipping window.\", \"{}\"); return Ok(()); }}", app_title.escape_default()));
             self.writeln("let mut native_options = eframe::NativeOptions::default();");
             self.writeln(&format!(
                 "native_options.viewport = egui::ViewportBuilder::default().with_inner_size([{:.1}, {:.1}]);",
                 app_width, app_height
             ));
             self.writeln(&format!(
-                "eframe::run_native(\"{}\", native_options, Box::new(|_cc| Ok(Box::new({target_app}::default()))))",
+                "eframe::run_native(\"{}\", native_options, Box::new(|_cc| Box::new({target_app}::default())))",
                 app_title.escape_default()
             ));
             self.indent_level -= 1;
@@ -930,6 +1315,28 @@ impl<'a> Codegen<'a> {
                 self.indent_level -= 1;
                 self.writeln("}");
             }
+            Stmt::Match { expr, arms, span } => {
+                self.writeln(&format!("// @line: {}", span.0));
+                let target_code = self.expr_to_string(expr);
+                self.writeln(&format!("match {target_code} {{"));
+                self.indent_level += 1;
+                for arm in arms {
+                    let pat_code = self.expr_to_string(&arm.pattern);
+                    let guard_str = if let Some(g) = &arm.guard {
+                        format!(" if {}", self.expr_to_string(g))
+                    } else {
+                        String::new()
+                    };
+                    let body_code = self.expr_to_string(&arm.body);
+                    if matches!(arm.body, Expr::Block(_, _)) {
+                        self.writeln(&format!("{pat_code}{guard_str} => {body_code}"));
+                    } else {
+                        self.writeln(&format!("{pat_code}{guard_str} => {body_code},"));
+                    }
+                }
+                self.indent_level -= 1;
+                self.writeln("}");
+            }
         }
     }
 
@@ -999,8 +1406,11 @@ impl<'a> Codegen<'a> {
             }
             Expr::Call { callee, args, .. } => {
                 if let Expr::Ident(name, _) = callee.as_ref() {
-                    if name == "print" {
+                    if name == "print" || name == "println" {
                         return self.emit_print(args);
+                    }
+                    if let Some(t) = self.struct_defs.get(name).cloned() {
+                        return self.emit_struct_instantiation(&t, args);
                     }
                 }
 
@@ -1160,6 +1570,29 @@ impl<'a> Codegen<'a> {
                 blk_cg.emit_block_body(b, false);
                 format!("{{\n{}}}", blk_cg.output)
             }
+            Expr::Tuple(elements, _) => {
+                let el_strs: Vec<String> = elements.iter().map(|e| self.expr_to_string(e)).collect();
+                if el_strs.len() == 1 {
+                    format!("({},)", el_strs[0])
+                } else {
+                    format!("({})", el_strs.join(", "))
+                }
+            }
+            Expr::Match { expr, arms, .. } => {
+                let target_code = self.expr_to_string(expr);
+                let mut arm_strs = Vec::new();
+                for arm in arms {
+                    let pat_code = self.expr_to_string(&arm.pattern);
+                    let guard_str = if let Some(g) = &arm.guard {
+                        format!(" if {}", self.expr_to_string(g))
+                    } else {
+                        String::new()
+                    };
+                    let body_code = self.expr_to_string(&arm.body);
+                    arm_strs.push(format!("{pat_code}{guard_str} => {body_code}"));
+                }
+                format!("match {target_code} {{\n{}\n}}", arm_strs.join(",\n"))
+            }
             Expr::RawRust(code, _) => code.clone(),
         }
     }
@@ -1175,6 +1608,68 @@ impl<'a> Codegen<'a> {
             format!("self.{name}.clone()")
         } else {
             self.expr_to_string(actual)
+        }
+    }
+
+    fn emit_struct_instantiation(&self, t: &TypeDef, args: &[Expr]) -> String {
+        if args.is_empty() {
+            return format!("{}::default()", t.name);
+        }
+        let mut field_assigns = Vec::new();
+        for (idx, arg) in args.iter().enumerate() {
+            match arg {
+                Expr::Assign { target, value, .. } => {
+                    let field_name_opt = match target.as_ref() {
+                        Expr::Ident(n, _) => Some(n.clone()),
+                        Expr::SelfAccess(n, _) => Some(n.clone()),
+                        _ => None,
+                    };
+                    if let Some(field_name) = field_name_opt {
+                        let val_str = self.call_arg_to_string(value);
+                        let is_str = t
+                            .fields
+                            .iter()
+                            .any(|f| f.name == field_name && f.ty == Some(TypeAnnotation::Str));
+                        let final_val = if is_str
+                            && !val_str.ends_with(".to_string()")
+                            && !val_str.ends_with(".into()")
+                        {
+                            format!("{val_str}.into()")
+                        } else {
+                            val_str
+                        };
+                        field_assigns.push(format!("{field_name}: {final_val}"));
+                    }
+                }
+                _ => {
+                    if idx < t.fields.len() {
+                        let field_name = &t.fields[idx].name;
+                        let val_str = self.call_arg_to_string(arg);
+                        let is_str = t.fields[idx].ty == Some(TypeAnnotation::Str);
+                        let final_val = if is_str
+                            && !val_str.ends_with(".to_string()")
+                            && !val_str.ends_with(".into()")
+                        {
+                            format!("{val_str}.into()")
+                        } else {
+                            val_str
+                        };
+                        field_assigns.push(format!("{field_name}: {final_val}"));
+                    }
+                }
+            }
+        }
+
+        if field_assigns.is_empty() {
+            format!("{}::default()", t.name)
+        } else if field_assigns.len() == t.fields.len() {
+            format!("{} {{ {} }}", t.name, field_assigns.join(", "))
+        } else {
+            format!(
+                "{} {{ {}, ..Default::default() }}",
+                t.name,
+                field_assigns.join(", ")
+            )
         }
     }
 

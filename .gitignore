@@ -1,5 +1,6 @@
 target/
 .bara_cache/
+emit_rs/
 **/*.rs.bk
 *.swp
 *.DS_Store

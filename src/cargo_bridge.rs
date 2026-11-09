@@ -145,7 +145,9 @@ impl CargoBridge {
         }
     }
 
-    /// Initialize a new Bara project template
+    /// Initialize a new Bara project template (blank hello-world, fully dynamic).
+    /// Core never hardcodes any demo app: the template is an empty hello-world
+    /// that works for CLI and GUI without bundling TodoApp or any other demo.
     pub fn init_project(name: &str, target_dir: &Path) -> Result<(), String> {
         if !target_dir.exists() {
             fs::create_dir_all(target_dir)
@@ -159,179 +161,9 @@ impl CargoBridge {
         fs::write(target_dir.join(".gitignore"), gitignore)
             .map_err(|e| format!("Failed to write .gitignore: {e}"))?;
 
-        let todo_br = r#"type TodoItem =
-    id: int
-    teks: str
-    selesai = false
-
-type TodoApp =
-    input_tugas = ""
-    filter_status = "Semua"
-    daftar_tugas = [
-        TodoItem(id = 1, teks = "Bikin compiler Bara", selesai = true),
-        TodoItem(id = 2, teks = "Integrasi parser JSX .brx", selesai = false),
-        TodoItem(id = 3, teks = "Compile ke egui native", selesai = false)
-    ]
-
-    tambah_tugas() =>
-        if input_tugas != "" =>
-            id_baru = daftar_tugas.len() + 1
-            daftar_tugas.push(TodoItem(id = id_baru, teks = input_tugas, selesai = false))
-            input_tugas = ""
-
-    hapus_tugas(id: int) =>
-        daftar_tugas.retain(t => t.id != id)
-
-    hitung_aktif() =>
-        daftar_tugas.filter(t => !t.selesai).len()
-"#;
-        fs::write(target_dir.join("todo.br"), todo_br)
-            .map_err(|e| format!("Failed to write todo.br: {e}"))?;
-
-        let todo_brx = r#"use eframe
-use egui
-use TodoApp
-
-view TodoApp =>
-    <Panel class="layar_utama">
-        <Col class="container_utama">
-            
-            {/* Header Aplikasi */}
-            <Row class="header_box">
-                <Text class="judul">⚡ Bara Todo App</Text>
-                <Text class="badge">Sisa: {hitung_aktif()} tugas</Text>
-            </Row>
-
-            {/* Form Input Tugas Baru */}
-            <Row class="form_box">
-                <Input 
-                    bind={input_tugas} 
-                    placeholder="Apa rencana kerjamu hari ini?..." 
-                />
-                <Button class="btn_tambah" onClick={tambah_tugas()}>
-                    Tambah
-                </Button>
-            </Row>
-
-            {/* Filter Tab */}
-            <Row class="filter_box">
-                <Button class={filter_status == "Semua" ? "btn_filter aktif" : "btn_filter"} onClick={filter_status = "Semua"}>
-                    Semua
-                </Button>
-                <Button class={filter_status == "Aktif" ? "btn_filter aktif" : "btn_filter"} onClick={filter_status = "Aktif"}>
-                    Aktif
-                </Button>
-                <Button class={filter_status == "Selesai" ? "btn_filter aktif" : "btn_filter"} onClick={filter_status = "Selesai"}>
-                    Selesai
-                </Button>
-            </Row>
-
-            <Separator />
-
-            {/* List Tugas (Scrollable Area) */}
-            <Scroll class="scroll_area">
-                <Col class="list_col">
-                    {for item in daftar_tugas =>
-                        {if filter_status == "Semua" or (filter_status == "Aktif" and !item.selesai) or (filter_status == "Selesai" and item.selesai) =>
-                            <Row class={item.selesai ? "item_tugas selesai" : "item_tugas"}>
-                                <Checkbox bind={item.selesai} />
-                                <Text class="teks_tugas">{item.teks}</Text>
-                                <Button class="btn_hapus" onClick={hapus_tugas(item.id)}>
-                                    ✕
-                                </Button>
-                            </Row>
-                        }
-                    }
-                </Col>
-            </Scroll>
-
-        </Col>
-    </Panel>
-
-<style>
-    .layar_utama {
-        background: #090d16;
-        padding: 24px;
-    }
-    .container_utama {
-        gap: 16px;
-    }
-    .header_box {
-        justify-content: space-between;
-        align-items: center;
-    }
-    .judul {
-        font-size: 22px;
-        color: #f8fafc;
-        font-weight: bold;
-    }
-    .badge {
-        font-size: 13px;
-        color: #38bdf8;
-        background: #0369a133;
-        padding: 4px 8px;
-        border-radius: 6px;
-    }
-    .form_box {
-        gap: 10px;
-    }
-    .btn_tambah {
-        background: #6366f1;
-        color: #ffffff;
-        border-radius: 8px;
-        padding: 8px 16px;
-    }
-    .filter_box {
-        gap: 8px;
-    }
-    .btn_filter {
-        background: #1e293b;
-        color: #94a3b8;
-        border-radius: 6px;
-        padding: 4px 12px;
-    }
-    .btn_filter.aktif {
-        background: #334155;
-        color: #f8fafc;
-        font-weight: bold;
-    }
-    .scroll_area {
-        height: 350px;
-    }
-    .list_col {
-        gap: 8px;
-    }
-    .item_tugas {
-        background: #111827;
-        border: 1px solid #1f2937;
-        padding: 12px;
-        border-radius: 10px;
-        align-items: center;
-        justify-content: space-between;
-    }
-    .item_tugas.selesai {
-        opacity: 0.5;
-    }
-    .teks_tugas {
-        color: #e2e8f0;
-        font-size: 14px;
-    }
-    .btn_hapus {
-        background: transparent;
-        color: #ef4444;
-        font-weight: bold;
-    }
-</style>
-"#;
-        fs::write(target_dir.join("todo.brx"), todo_brx)
-            .map_err(|e| format!("Failed to write todo.brx: {e}"))?;
-
-        let main_br = r#"use brui
-use TodoApp
-
-brui.provider("egui")
-app = brui.load("todo.brx")
-app.run("Bara Todo Desktop", width = 450, height = 600)
+        // Blank hello-world template: no hardcoded demo app, no TodoApp.
+        // Users add their own `type`, `view`, `layout.xml`, `styles.css` files.
+        let main_br = r#"print("Hello from Bara!")
 "#;
         fs::write(target_dir.join("main.br"), main_br)
             .map_err(|e| format!("Failed to write main.br: {e}"))?;
@@ -340,6 +172,8 @@ app.run("Bara Todo Desktop", width = 450, height = 600)
     }
 
     /// Collect all source files from the project or an explicit entry file
+    /// Scans recursively (excluding `target/`, `.bara_cache/`, `.git/`) and
+    /// collects `.br`, `.brx`, `.xml` (Brui layout) and `.css` (Brui style).
     pub fn collect_sources(&self, entry: Option<&Path>) -> Result<(Vec<SourceFile>, BaraConfig), String> {
         let toml_path = self.project_root.join("bara.toml");
         let config = if toml_path.exists() {
@@ -374,7 +208,7 @@ app.run("Bara Todo Desktop", width = 450, height = 600)
             }
         }
 
-        // Find all .br and .brx files in project_root (and src/ if exists)
+        // Find all .br/.brx/.xml/.css files recursively (excluding build caches)
         let mut scanned_files = Vec::new();
         self.scan_dir_for_bara(&self.project_root, &mut scanned_files)?;
 
@@ -425,6 +259,8 @@ app.run("Bara Todo Desktop", width = 450, height = 600)
     }
 
     fn scan_dir_for_bara(&self, dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
+        // Recursive scan so `pages/auth/login.brx`, `pages/dashboard/*.brx`,
+        // `layout.xml`, `styles.css`, etc. are all discovered consistently.
         let entries = match fs::read_dir(dir) {
             Ok(e) => e,
             Err(_) => return Ok(()),
@@ -432,9 +268,18 @@ app.run("Bara Todo Desktop", width = 450, height = 600)
 
         for entry in entries.flatten() {
             let path = entry.path();
+            if path.is_dir() {
+                if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
+                    if name == "target" || name == ".bara_cache" || name == ".git" {
+                        continue;
+                    }
+                }
+                self.scan_dir_for_bara(&path, files)?;
+                continue;
+            }
             if path.is_file() {
-                if let Some(ext) = path.extension() {
-                    if ext == "br" || ext == "brx" {
+                if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
+                    if ext == "br" || ext == "brx" || ext == "xml" || ext == "css" {
                         if !files.contains(&path) {
                             files.push(path);
                         }
@@ -445,11 +290,88 @@ app.run("Bara Todo Desktop", width = 450, height = 600)
         Ok(())
     }
 
-    /// Transpiles source files into a unified valid Rust program string
+    /// Transpiles source files into a unified valid Rust program string.
+    /// `.css` stylesheets are EXPLICIT: a project only gets a stylesheet when
+    /// some `.br`/`.brx` file contains `use "styles.css"`, `use styles.css`
+    /// or shorthand `use styles`. Without such an import the `.css` file is
+    /// ignored (never auto-loaded). This keeps core fully dynamic.
     pub fn transpile_sources(&self, sources: &[SourceFile]) -> Result<String, String> {
+        // Pass 0: parse Bara sources first to discover explicit stylesheet imports.
+        let mut bara_programs: Vec<(usize, Program)> = Vec::new();
+        let mut css_imports: Vec<String> = Vec::new();
+        for (idx, source) in sources.iter().enumerate() {
+            let ext = source
+                .path
+                .extension()
+                .and_then(|s| s.to_str())
+                .unwrap_or("");
+            if ext == "br" || ext == "brx" {
+                let tokens = Lexer::new(&source.content).tokenize().map_err(|e| {
+                    format!("{}: {e}", source.path.display())
+                })?;
+                let program = Parser::new(tokens).parse_program().map_err(|e| {
+                    format!("{}: {e}", source.path.display())
+                })?;
+                for item in &program.items {
+                    if let Item::Use(u) = item {
+                        if let Some(css_file) = css_import_filename(&u.path) {
+                            if !css_imports.contains(&css_file) {
+                                css_imports.push(css_file);
+                            }
+                        }
+                    }
+                }
+                bara_programs.push((idx, program));
+            }
+        }
+
         let mut all_items: Vec<Item> = Vec::new();
 
         for source in sources {
+            let ext = source
+                .path
+                .extension()
+                .and_then(|s| s.to_str())
+                .unwrap_or("");
+            if ext == "css" {
+                // Explicit-only: include iff some Bara file imports it.
+                let fname = source
+                    .path
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("");
+                let stem = source
+                    .path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("");
+                let wanted = css_imports.iter().any(|imp| {
+                    imp == fname || imp == stem || imp == &format!("{stem}.css")
+                });
+                if wanted {
+                    all_items.push(Item::StyleBlock(source.content.clone(), (1, 1)));
+                }
+                continue;
+            }
+            if ext == "xml" {
+                // Brui XML layout: parse into a ViewDef
+                let default_name = source
+                    .path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("BruiView");
+                let default_name = capitalize_name(default_name);
+                match crate::brui_xml::parse_brui_xml(&source.content, &default_name) {
+                    Ok(view) => all_items.push(Item::View(view)),
+                    Err(e) => {
+                        return Err(format!("{}: {e}", source.path.display()));
+                    }
+                }
+                continue;
+            }
+            if ext == "br" || ext == "brx" {
+                continue; // already parsed above; merged below
+            }
             let tokens = Lexer::new(&source.content).tokenize().map_err(|e| {
                 format!("{}: {e}", source.path.display())
             })?;
@@ -457,6 +379,10 @@ app.run("Bara Todo Desktop", width = 450, height = 600)
                 format!("{}: {e}", source.path.display())
             })?;
             all_items.extend(program.items);
+        }
+
+        for (_, prog) in bara_programs {
+            all_items.extend(prog.items);
         }
 
         let mut unified_program = Program { items: all_items };
@@ -478,12 +404,50 @@ app.run("Bara Todo Desktop", width = 450, height = 600)
     }
 
     /// Runs static diagnostic analysis on Bara source files
+    /// `.css` files are always valid stylesheets; `.xml` files are validated
+    /// with the Brui XML parser so shared `styles.css` + multi-page `.brx`
+    /// projects report accurate diagnostics.
     pub fn diagnose_sources(&self, sources: &[SourceFile]) -> Vec<Diagnostic> {
-        let mut unified_program = Program { items: Vec::new() };
+        let mut debugger = BaraDebugger::new();
+        let mut parsed_sources = Vec::new();
         let mut all_diags = Vec::new();
 
         for source in sources {
             let fname = source.path.display().to_string();
+            let ext = source
+                .path
+                .extension()
+                .and_then(|s| s.to_str())
+                .unwrap_or("");
+            if ext == "css" {
+                // Shared stylesheet: validate with CSS engine (never an error, just parse).
+                let _ = crate::css_engine::CssStyleSheet::parse(&source.content);
+                continue;
+            }
+            if ext == "xml" {
+                let default_name = source
+                    .path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("BruiView");
+                let default_name = capitalize_name(default_name);
+                match crate::brui_xml::parse_brui_xml(&source.content, &default_name) {
+                    Ok(view) => {
+                        debugger.known_types.insert(view.type_name.clone());
+                        debugger.known_globals.insert(view.type_name.clone());
+                        parsed_sources.push((
+                            fname,
+                            Program {
+                                items: vec![Item::View(view)],
+                            },
+                        ));
+                    }
+                    Err(e) => {
+                        all_diags.push(Diagnostic::error("E0000", e, (1, 1)).with_file(fname));
+                    }
+                }
+                continue;
+            }
             let tokens = match Lexer::new(&source.content).tokenize() {
                 Ok(t) => t,
                 Err(e) => {
@@ -498,11 +462,28 @@ app.run("Bara Todo Desktop", width = 450, height = 600)
                     continue;
                 }
             };
-            unified_program.items.extend(program.items);
+
+            // Pre-register global types and functions from all files
+            for item in &program.items {
+                match item {
+                    Item::Type(t) => {
+                        debugger.known_types.insert(t.name.clone());
+                        debugger.known_globals.insert(t.name.clone());
+                    }
+                    Item::Fn(f) => {
+                        debugger.known_globals.insert(f.name.clone());
+                    }
+                    _ => {}
+                }
+            }
+
+            parsed_sources.push((fname, program));
         }
 
-        let mut debugger = BaraDebugger::new();
-        debugger.inspect(&unified_program, None);
+        for (fname, program) in &parsed_sources {
+            debugger.inspect(program, Some(fname));
+        }
+
         all_diags.extend(debugger.diagnostics);
         all_diags
     }
@@ -552,6 +533,16 @@ app.run("Bara Todo Desktop", width = 450, height = 600)
         config: &BaraConfig,
         rust_code: &str,
     ) -> Result<PathBuf, String> {
+        self.setup_cache_with_sources(config, rust_code, &[])
+    }
+
+    /// Prepare `.bara_cache/` workspace directory with `Cargo.toml`, `src/main.rs`, and component transpiles
+    pub fn setup_cache_with_sources(
+        &self,
+        config: &BaraConfig,
+        rust_code: &str,
+        sources: &[SourceFile],
+    ) -> Result<PathBuf, String> {
         let src_dir = self.cache_dir.join("src");
         fs::create_dir_all(&src_dir).map_err(|e| {
             format!("Failed to create cache directory {}: {e}", src_dir.display())
@@ -567,7 +558,58 @@ app.run("Bara Todo Desktop", width = 450, height = 600)
             format!("Failed to write {}: {e}", main_rs_path.display())
         })?;
 
+        // Also transpile and write individual component/module files in .bara_cache/src/ (e.g. models.rs)
+        for source in sources {
+            let stem = source.path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+            if !stem.is_empty() && stem != "main" {
+                if let Ok(tokens) = Lexer::new(&source.content).tokenize() {
+                    if let Ok(mut prog) = Parser::new(tokens).parse_program() {
+                        let mut single_analyzer = Analyzer::new();
+                        let _ = single_analyzer.analyze_program(&mut prog);
+                        let mut single_codegen = Codegen::new(&single_analyzer);
+                        let single_rs = single_codegen.generate(&prog);
+                        let dest_path = src_dir.join(format!("{stem}.rs"));
+                        let _ = fs::write(dest_path, single_rs);
+                    }
+                }
+            }
+        }
+
         Ok(main_rs_path)
+    }
+
+    /// Emits transpiled Rust files from .bara_cache/src to destination folder
+    pub fn emit_rs_to(&self, out_dir: &Path, entry: Option<&Path>) -> Result<Vec<PathBuf>, String> {
+        let (sources, config) = self.collect_sources(entry)?;
+        let rust_code = self.transpile_sources(&sources)?;
+        self.setup_cache_with_sources(&config, &rust_code, &sources)?;
+
+        let dest_dir = if out_dir.is_absolute() {
+            out_dir.to_path_buf()
+        } else {
+            self.project_root.join(out_dir)
+        };
+        fs::create_dir_all(&dest_dir).map_err(|e| {
+            format!("Failed to create output directory {}: {e}", dest_dir.display())
+        })?;
+
+        let cache_src = self.cache_dir.join("src");
+        let mut emitted = Vec::new();
+        if let Ok(entries) = fs::read_dir(&cache_src) {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if p.is_file() && p.extension().map(|e| e == "rs").unwrap_or(false) {
+                    if let Some(fname) = p.file_name() {
+                        let target = dest_dir.join(fname);
+                        if fs::copy(&p, &target).is_ok() {
+                            emitted.push(target);
+                        }
+                    }
+                }
+            }
+        }
+        emitted.sort();
+        Ok(emitted)
     }
 
     /// Generate `.bara_cache/Cargo.toml` with presets and dependencies
@@ -633,7 +675,7 @@ app.run("Bara Todo Desktop", width = 450, height = 600)
     ) -> Result<PathBuf, String> {
         let (sources, config) = self.collect_sources(entry)?;
         let rust_code = self.transpile_sources(&sources)?;
-        self.setup_cache(&config, &rust_code)?;
+        self.setup_cache_with_sources(&config, &rust_code, &sources)?;
 
         println!("Compiling Bara project '{}' via Cargo Bridge...", config.name);
 
@@ -684,7 +726,7 @@ app.run("Bara Todo Desktop", width = 450, height = 600)
     ) -> Result<i32, String> {
         let (sources, config) = self.collect_sources(entry)?;
         let rust_code = self.transpile_sources(&sources)?;
-        self.setup_cache(&config, &rust_code)?;
+        self.setup_cache_with_sources(&config, &rust_code, &sources)?;
 
         println!("Running Bara project '{}'...", config.name);
 
@@ -789,4 +831,49 @@ app.run("Bara Todo Desktop", width = 450, height = 600)
             "bara_source".to_string()
         }
     }
+}
+
+fn capitalize_name(s: &str) -> String {
+  let mut c = s.chars();
+  match c.next() { Some(f) => format!("{}{}", f.to_ascii_uppercase(), c.collect::<String>()), None => "BruiView".to_string() }
+}
+
+/// Returns `Some(css_filename)` when a `use` path is an explicit stylesheet
+/// import (`use "styles.css"`, `use styles.css`, or shorthand `use styles`).
+/// Otherwise returns `None` (a normal Rust/module import).
+fn css_import_filename(path: &[String]) -> Option<String> {
+    if path.is_empty() {
+        return None;
+    }
+    // String form: use "styles.css" -> path == ["styles.css"]
+    if path.len() == 1 {
+        let s = path[0].trim();
+        if s.ends_with(".css") {
+            // Keep only the file name (allow "pages/styles.css" too).
+            let fname = s.rsplit('/').next().unwrap_or(s);
+            return Some(fname.to_string());
+        }
+        if s == "styles" || s == "style" || s == "stylesheet" {
+            return Some("styles.css".to_string());
+        }
+    }
+    // Dotted form: use styles.css -> path == ["styles", "css"]
+    if path.len() == 2 && path[1] == "css" {
+        return Some(format!("{}.css", path[0]));
+    }
+    if path.last().map(|s| s == "css").unwrap_or(false) {
+        let stem = path.first().cloned().unwrap_or_else(|| "styles".to_string());
+        return Some(format!("{stem}.css"));
+    }
+    if path.iter().any(|s| s.ends_with(".css")) {
+        let raw = path.iter().find(|s| s.ends_with(".css")).unwrap();
+        let fname = raw.rsplit('/').next().unwrap_or(raw);
+        return Some(fname.to_string());
+    }
+    None
+}
+
+/// True when a `use` statement refers to a stylesheet (never emitted as Rust).
+pub fn is_stylesheet_use(path: &[String]) -> bool {
+    css_import_filename(path).is_some()
 }

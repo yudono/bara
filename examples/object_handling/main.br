@@ -1,0 +1,48 @@
+// object_handling: create objects, call methods, nest structs,
+// keep objects in a list, filter/len, iterate. CLI only.
+use models
+
+print("== object_handling demo ==")
+
+// --- mutating methods (&mut self): deposit / withdraw ---
+a1 = BankAccount(owner = "Ayu", balance = 1000)
+a1.deposit(500)
+ok = a1.withdraw(200)
+print("withdraw ok:", ok)
+print("balance:", a1.balance)
+info = a1.show()
+print("account:", info)
+
+a2 = BankAccount(owner = "Budi", balance = 50)
+a2.deposit(25)
+ok2 = a2.withdraw(1000)
+print("withdraw ok2:", ok2)
+print("balance2:", a2.balance)
+
+// --- read-only methods (&self): is_empty ---
+e1 = BankAccount(owner = "Empty", balance = 0)
+print("e1 empty:", e1.is_empty())
+print("a1 empty:", a1.is_empty())
+
+// --- counter with mutating increment / add_many and get reader ---
+c = Counter(value = 10)
+c.increment()
+c.add_many(5)
+print("counter:", c.get())
+
+// --- nested struct composition ---
+p1 = BankAccount(owner = "Cici", balance = 300)
+p2 = BankAccount(owner = "Dodi", balance = 700)
+vault = Pair(first = p1, second = p2)
+print("vault total:", vault.total())
+
+// --- list of objects: filter/len, then iterate ---
+accounts = [a1, a2, e1]
+rich = accounts.filter(a => a.balance >= 1000).len()
+print("rich count:", rich)
+empty_count = accounts.filter(a => a.is_empty()).len()
+print("empty count:", empty_count)
+grand = 0
+for a in accounts =>
+    grand = grand + a.balance
+print("grand total:", grand)

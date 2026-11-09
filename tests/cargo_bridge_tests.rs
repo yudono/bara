@@ -43,19 +43,20 @@ fn test_cargo_bridge_init_and_check() {
 
     CargoBridge::init_project("test_app", &project_dir).expect("Init failed");
 
+    // Blank hello-world template: core is fully dynamic, no hardcoded demo app.
     assert!(project_dir.join("bara.toml").exists());
     assert!(project_dir.join("main.br").exists());
-    assert!(project_dir.join("todo.br").exists());
-    assert!(project_dir.join("todo.brx").exists());
+    assert!(!project_dir.join("todo.br").exists());
+    assert!(!project_dir.join("todo.brx").exists());
 
     let bridge = CargoBridge::new(project_dir.clone());
     let check_res = bridge.check(None);
     assert!(check_res.is_ok(), "Check failed: {:?}", check_res.err());
 
     let rust_code = bridge.transpile(None).expect("Transpile failed");
-    assert!(rust_code.contains("pub struct TodoApp"));
-    assert!(rust_code.contains("impl eframe::App for TodoApp"));
-    assert!(rust_code.contains("fn main() -> Result<(), eframe::Error>"));
+    assert!(rust_code.contains("Hello from Bara"));
+    assert!(rust_code.contains("fn main()"));
+    assert!(!rust_code.contains("TodoApp"));
 }
 
 #[test]
@@ -74,8 +75,15 @@ fn test_cargo_bridge_cache_generation() {
 
     let cargo_toml = fs::read_to_string(bridge.cache_dir.join("Cargo.toml")).expect("Read Cargo.toml failed");
     assert!(cargo_toml.contains("name = \"cache_app\""));
-    assert!(cargo_toml.contains("eframe = \"0.27\""));
-    assert!(cargo_toml.contains("egui = \"0.27\""));
+    // Blank hello-world has no GUI deps: eframe/egui are auto-detected only
+    // when generated Rust actually uses them (fully dynamic core).
+    assert!(!cargo_toml.contains("eframe"));
+    assert!(!cargo_toml.contains("egui"));
+
+    // GUI detection still works when Rust code uses eframe.
+    let gui_toml = bridge.generate_cargo_toml(&config, "impl eframe::App for Foo {}");
+    assert!(gui_toml.contains("eframe = \"0.27\""));
+    assert!(gui_toml.contains("egui = \"0.27\""));
 }
 
 #[test]

@@ -1,0 +1,41 @@
+use server
+
+print("==========================================")
+print("   🚀 BARA BACKEND API MICROSERVICE      ")
+print("==========================================")
+
+server = ApiServer()
+
+// 1. Public Healthcheck Endpoint
+req_health = HttpRequest(method = "GET", path = "/health")
+res_health = server.dispatch(req_health)
+print("[GET /health] Status:", res_health.status_code)
+print("Payload:", res_health.body)
+
+// 2. Unauthorized request (missing token)
+req_unauth = HttpRequest(method = "GET", path = "/api/users")
+res_unauth = server.dispatch(req_unauth)
+print("\n[GET /api/users - No Auth] Status:", res_unauth.status_code)
+print("Payload:", res_unauth.body)
+
+// 3. Authorized request (with bearer token)
+req_users = HttpRequest(method = "GET", path = "/api/users", token = "secret_bearer_token")
+res_users = server.dispatch(req_users)
+print("\n[GET /api/users - Authorized] Status:", res_users.status_code)
+print("Payload:", res_users.body)
+
+// 4. POST creation request
+req_post = HttpRequest(method = "POST", path = "/api/users", token = "secret_bearer_token", body = "{{\"name\": \"David\"}}")
+res_post = server.dispatch(req_post)
+print("\n[POST /api/users] Status:", res_post.status_code)
+print("Payload:", res_post.body)
+
+// 5. 404 Route Not Found
+req_404 = HttpRequest(method = "GET", path = "/api/unknown", token = "secret_bearer_token")
+res_404 = server.dispatch(req_404)
+print("\n[GET /api/unknown] Status:", res_404.status_code)
+print("Payload:", res_404.body)
+
+print("==========================================")
+print("✓ Backend API simulation completed successfully!")
+print("==========================================")

@@ -99,8 +99,8 @@ impl Diagnostic {
 
 pub struct BaraDebugger {
     pub diagnostics: Vec<Diagnostic>,
-    known_types: HashSet<String>,
-    known_globals: HashSet<String>,
+    pub known_types: HashSet<String>,
+    pub known_globals: HashSet<String>,
 }
 
 impl BaraDebugger {
@@ -150,6 +150,7 @@ impl BaraDebugger {
         }
 
         // Validate types and their methods
+        let mut top_level_scope = self.known_globals.clone();
         for item in &program.items {
             match item {
                 Item::Type(t) => {
@@ -162,14 +163,21 @@ impl BaraDebugger {
                     self.check_view_def(v);
                 }
                 Item::TopLevelStmt(s) => {
-                    let mut scope = self.known_globals.clone();
-                    self.check_stmt(s, &mut scope, &HashSet::new());
+                    self.check_stmt(s, &mut top_level_scope, &HashSet::new());
                 }
                 Item::Use(u) => {
+                    // Stylesheet imports are not Rust modules: do not pollute scope.
+                    if u.path.iter().any(|s| s.ends_with(".css") || s == "css")
+                        || (u.path.len() == 1 && (u.path[0] == "styles" || u.path[0] == "style"))
+                    {
+                        continue;
+                    }
                     if let Some(alias) = &u.alias {
                         self.known_globals.insert(alias.clone());
+                        top_level_scope.insert(alias.clone());
                     } else if let Some(last) = u.path.last() {
                         self.known_globals.insert(last.clone());
+                        top_level_scope.insert(last.clone());
                     }
                 }
                 _ => {}
@@ -290,25 +298,20 @@ impl BaraDebugger {
             Stmt::While { cond, body, span } => {
                 self.check_expr(cond, scope, struct_fields);
 
-                // Detect potential infinite loop: while true / while flag where flag is never mutated
+                // Detect potential infinite loop: while cond where cond vars are never mutated and no break/return
                 let mut cond_vars = HashSet::new();
                 self.collect_idents(cond, &mut cond_vars);
 
                 let mut body_mutations = HashSet::new();
-                for bs in &body.stmts {
-                    if let Stmt::Assign { target, .. } = bs {
-                        if let Expr::Ident(name, _) = target {
-                            body_mutations.insert(name.clone());
-                        }
-                    }
-                }
+                self.collect_mutations_in_block(body, &mut body_mutations);
+                let has_terminator = self.block_has_terminator(body);
 
                 let mut body_scope = scope.clone();
                 self.check_block(body, &mut body_scope, struct_fields);
 
                 if !cond_vars.is_empty()
                     && cond_vars.iter().all(|v| !body_mutations.contains(v))
-                    && !body.stmts.iter().any(|bs| matches!(bs, Stmt::Break(_) | Stmt::Return(_, _)))
+                    && !has_terminator
                 {
                     self.diagnostics.push(
                         Diagnostic::warning(
@@ -449,7 +452,8 @@ impl BaraDebugger {
     fn check_jsx_element(&mut self, el: &JsxElement) {
         let valid_brui_tags = [
             "Panel", "Col", "Row", "Scroll", "Text", "Button",
-            "Input", "Checkbox", "Slider", "Separator"
+            "Input", "TextField", "Checkbox", "Slider", "Separator",
+            "Wrap", "Container", "Image", "Progress", "Spacer",
         ];
 
         if !valid_brui_tags.contains(&el.tag.as_str()) {
@@ -523,5 +527,55 @@ impl BaraDebugger {
             }
             _ => {}
         }
+    }
+
+    fn collect_mutations_in_block(&self, block: &Block, mutations: &mut HashSet<String>) {
+        for s in &block.stmts {
+            match s {
+                Stmt::Assign { target, .. } => {
+                    if let Expr::Ident(name, _) = target {
+                        mutations.insert(name.clone());
+                    }
+                }
+                Stmt::If { then_branch, elif_branches, else_branch, .. } => {
+                    self.collect_mutations_in_block(then_branch, mutations);
+                    for (_, b) in elif_branches {
+                        self.collect_mutations_in_block(b, mutations);
+                    }
+                    if let Some(eb) = else_branch {
+                        self.collect_mutations_in_block(eb, mutations);
+                    }
+                }
+                Stmt::While { body, .. } | Stmt::For { body, .. } => {
+                    self.collect_mutations_in_block(body, mutations);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn block_has_terminator(&self, block: &Block) -> bool {
+        for s in &block.stmts {
+            match s {
+                Stmt::Break(_) | Stmt::Return(_, _) => return true,
+                Stmt::If { then_branch, elif_branches, else_branch, .. } => {
+                    if self.block_has_terminator(then_branch) {
+                        return true;
+                    }
+                    for (_, b) in elif_branches {
+                        if self.block_has_terminator(b) {
+                            return true;
+                        }
+                    }
+                    if let Some(eb) = else_branch {
+                        if self.block_has_terminator(eb) {
+                            return true;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        false
     }
 }

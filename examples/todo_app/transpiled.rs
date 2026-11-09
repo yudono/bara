@@ -163,7 +163,9 @@ impl eframe::App for TodoApp {
                                 |ui| {
                                     ui.vertical(|ui| {
                                         ui.spacing_mut().item_spacing.y = 8.0;
+                                        let mut __actions: Vec<Box<dyn FnOnce(&mut Self)>> = Vec::new();
                                         for item in &mut self.daftar_tugas {
+                                            let __item_clone = item.clone();
                                             if (((self.filter_status == "Semua".to_string())
                                                 || ((self.filter_status == "Aktif".to_string())
                                                     && !item.selesai))
@@ -197,12 +199,18 @@ impl eframe::App for TodoApp {
                                                                     )
                                                                     .clicked()
                                                                 {
-                                                                    self.hapus_tugas(item.id);
+                                                                    let __item = __item_clone.clone();
+                                                                    __actions.push(Box::new(move |s: &mut Self| {
+                                                                        s.hapus_tugas(__item.id);
+                                                                    }));
                                                                 }
                                                             });
                                                         },
                                                     );
                                             }
+                                        }
+                                        for act in __actions {
+                                            act(self);
                                         }
                                     });
                                 },
@@ -219,6 +227,6 @@ fn main() -> Result<(), eframe::Error> {
     eframe::run_native(
         "Bara Todo Desktop",
         native_options,
-        Box::new(|_cc| Ok(Box::new(TodoApp::default()))),
+        Box::new(|_cc| Box::new(TodoApp::default())),
     )
 }

@@ -1,0 +1,95 @@
+use eframe
+use egui
+use DashboardApp
+
+view DashboardApp =>
+    <Panel class="dashboard_screen">
+        <Col class="main_layout">
+
+            {/* Top Navigation Bar */}
+            <Row class="top_navbar">
+                <Text class="brand_title">{app_title}</Text>
+                <Row class="navbar_actions">
+                    <Input bind={search_query} placeholder="Search metrics or servers..." />
+                    <Button class="btn_primary" onClick={simulate_traffic()}>
+                        Simulate Load
+                    </Button>
+                </Row>
+            </Row>
+
+            {/* Page Tab Bar */}
+            <Row class="tab_bar">
+                <Button class={current_page == "overview" ? "tab_item tab_active" : "tab_item"} onClick={navigate("overview")}>
+                    Overview
+                </Button>
+                <Button class={current_page == "users" ? "tab_item tab_active" : "tab_item"} onClick={navigate("users")}>
+                    Cluster Nodes
+                </Button>
+                <Button class={current_page == "login" ? "tab_item tab_active" : "tab_item"} onClick={navigate("login")}>
+                    Sign In
+                </Button>
+                <Button class={current_page == "register" ? "tab_item tab_active" : "tab_item"} onClick={navigate("register")}>
+                    Register
+                </Button>
+            </Row>
+
+            <Separator />
+
+            {/* Overview page */}
+            {if current_page == "overview" =>
+                <Col class="page_col">
+                    <Row class="kpi_grid">
+                        {for card in metrics =>
+                            <Col class="kpi_card">
+                                <Text class="kpi_title">{card.title}</Text>
+                                <Text class="kpi_value">{card.value}</Text>
+                                <Text class="kpi_change">{card.change}</Text>
+                            </Col>
+                        }
+                    </Row>
+                    <Row class="section_header">
+                        <Text class="section_title">Live Cluster Events</Text>
+                        <Button class="btn_secondary" onClick={clear_activities()}>
+                            Clear Logs
+                        </Button>
+                    </Row>
+                    <Scroll class="log_scroll">
+                        <Col class="log_list">
+                            {for item in activities =>
+                                <Row class="log_row">
+                                    <Text class="log_time">[{item.timestamp}]</Text>
+                                    <Text class="log_action">{item.action}</Text>
+                                    <Text class="log_status">{item.status}</Text>
+                                </Row>
+                            }
+                        </Col>
+                    </Scroll>
+                </Col>
+            }
+
+            {/* Cluster nodes page pointer */}
+            {if current_page == "users" =>
+                <Col class="page_col">
+                    <Text class="page_title">Cluster Nodes</Text>
+                    <Text class="auth_hint">Open the Cluster Nodes view to manage every node in the fleet.</Text>
+                </Col>
+            }
+
+            {/* Sign in page pointer */}
+            {if current_page == "login" =>
+                <Col class="page_col">
+                    <Text class="page_title">Sign In</Text>
+                    <Text class="auth_hint">Open the Sign In view to authenticate your session.</Text>
+                </Col>
+            }
+
+            {/* Register page pointer */}
+            {if current_page == "register" =>
+                <Col class="page_col">
+                    <Text class="page_title">Create Account</Text>
+                    <Text class="auth_hint">Open the Register view to create a new account.</Text>
+                </Col>
+            }
+
+        </Col>
+    </Panel>

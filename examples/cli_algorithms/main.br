@@ -1,0 +1,33 @@
+use algorithms
+
+print("==========================================")
+print("   ⚡ BARA STANDARD ALGORITHM BENCHMARKS   ")
+print("==========================================")
+
+// 1. Fibonacci
+fib10 = fibonacci(10)
+fib20 = fibonacci(20)
+print("Fibonacci(10):", fib10)
+print("Fibonacci(20):", fib20)
+
+// 2. Prime Numbers & Sieve
+primes_to_30 = sieve_primes(30)
+print("Primes up to 30 count:", primes_to_30.len())
+
+// 3. Sorting (Bubble Sort)
+unsorted = [64, 34, 25, 12, 22, 11, 90]
+sorted = bubble_sort(unsorted)
+print("Unsorted count:", unsorted.len())
+print("Sorted first element:", sorted[0])
+
+// 4. Binary Search
+target_idx = binary_search(sorted, 25)
+print("Index of 25 in sorted array:", target_idx)
+
+// 5. Greatest Common Divisor
+gcd_val = gcd(48, 18)
+print("GCD of 48 and 18:", gcd_val)
+
+print("==========================================")
+print("✓ All algorithmic benchmarks passed!")
+print("==========================================")

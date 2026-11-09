@@ -1,0 +1,8 @@
+[package]
+name = "cli_algorithms"
+version = "0.1.0"
+entry = "main.br"
+
+[presets]
+
+[dependencies]

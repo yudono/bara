@@ -1,0 +1,24 @@
+// string_utils: borrowed string params (a `str` param compiles to
+// `&String`), string helpers, plus an enum with match-based dispatch.
+// Note: `match` targets take no trailing `=>`; a bare `ident =>` would
+// parse as a closure instead.
+pub shout(s: str) -> str =>
+    return s.to_uppercase()
+
+pub slugify(s: str) -> str =>
+    return s.to_lowercase()
+
+pub greeting(name: str, punct: str) -> str =>
+    return "Hello {name}{punct}"
+
+pub enum TextStatus =
+    Plain
+    Rich(str)
+    Empty
+
+pub label_of(st: TextStatus) -> str =>
+    label = match st
+        TextStatus::Plain => "plain"
+        TextStatus::Rich(s) => s.clone()
+        TextStatus::Empty => "empty"
+    return label

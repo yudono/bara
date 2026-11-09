@@ -2,6 +2,8 @@
 
 **Bara** (`.br`, `.brx`, `brui`) is a high-level, expressive systems language that compiles directly to 100% compatible native Rust, targeting `egui`/`eframe` for cross-platform GUI applications with compile-time CSS styling.
 
+> Built with AI assistance.
+
 ---
 
 ## Architecture & Components
@@ -247,14 +249,71 @@ app.run("Bara Todo Desktop", width = 450, height = 600)
 
 ---
 
+## Project Structure
+
+```
+examples/
+  todo_app/            # Todo list: types + methods (todo.br) + native GUI (todo.brx)
+  dashboard_gui/       # Multi-page cloud dashboard: shell.brx + shared styles.css
+    pages/
+      auth/            # login (.br + .brx), register (.br + .brx)
+      dashboard/       # overview (.br + .brx), users (.br + .brx)
+  brui_xml_gui/        # XML-layout variant: app.br + layout.xml + shared styles.css
+  cli_algorithms/      # Fibonacci, primes, sorting, binary search, GCD (CLI)
+  backend_api/         # HttpRequest/Response + ApiServer dispatch demo (CLI)
+  multi_lib/           # Multi-module imports: libs/{math_ops,string_utils,models}.br
+  object_handling/     # Structs, methods, nested composition (models.br + main.br)
+src/                   # Compiler: lexer, parser, analyzer, css_engine, codegen, cargo_bridge
+tests/                 # Unit + integration suites (see docs/testing.md)
+docs/                  # brui_components.md, brui_styling.md, examples.md, testing.md
+```
+
+Every example ships a `bara.toml` with `[package]` + `[presets]` + `[dependencies]`
+tables; `[presets]` selects toolchain behavior (`gui` pulls `eframe`/`egui`).
+
+### Shared `styles.css` concept (explicit import)
+
+A `.css` file is only compiled in when some `.br`/`.brx` file explicitly
+imports it — core never auto-loads stylesheets. Add one line to `main.br`
+(or `app.br`):
+
+```python
+use "styles.css"
+```
+
+`use styles.css` and shorthand `use styles` work too. `dashboard_gui/styles.css`
+and `brui_xml_gui/styles.css` therefore style every `.brx` page and XML layout
+in their project only because their `main.br` imports them — no per-`.brx`
+`<style>` block needed. Inline `<style>` (as in `todo.brx`) merges into the
+same sheet. Without the `use` line the `.css` file is ignored.
+See `docs/brui_styling.md`.
+
+### Headless GUI mode
+
+GUI binaries skip window creation when there is no display, when
+`BARA_HEADLESS` is set, or when `--headless` is passed — printing a line and
+exiting 0 (used by CI and integration tests):
+
+```bash
+./target/debug/bara build examples/todo_app/main.br --offline
+BARA_HEADLESS=1 ./examples/todo_app/target/debug/todo_app --headless
+# Bara GUI 'Bara Todo Desktop': headless mode, skipping window.
+```
+
+---
+
 ## Running the Compiler & Tests
 
 ```bash
 # Build the Bara CLI compiler
 cargo build
 
-# Run all 106 test suites across 15 domains
-cargo test
+# Run all test suites (unit + integration, offline-capable)
+cargo test --offline
+
+# One suite at a time
+cargo test --offline --test integration_todo_app_test
+cargo test --offline --test integration_rest_api_test
 
 # Pre-compilation static debugger & diagnostic linter
 ./target/debug/bara debug examples/todo_app/main.br
@@ -268,7 +327,7 @@ cargo test
 
 ---
 
-## Exhaustive Test Coverage (106 Tests, 100% Passing)
+## Exhaustive Test Coverage (Core Suites: 133 Tests, 100% Passing)
 
 Bara enforces a zero-tolerance failure policy with automated `syn::parse_file` verification ensuring every generated line compiles to valid Rust:
 
@@ -289,4 +348,9 @@ Bara enforces a zero-tolerance failure policy with automated `syn::parse_file` v
 | **Cargo Bridge** | `tests/cargo_bridge_tests.rs` | 4 | Config Parsing & Serialization, Error Line Mapping, `.bara_cache` Generation, Project Init & Check |
 | **Lexer & Tokens** | `tests/lexer_tests.rs` | 3 | Indent/Dedent, Raw Rust Block Lexing, Operators & Keywords |
 | **Full Todo App Template** | `tests/todo_transpile_tests.rs` | 1 | Complete multi-file `.br` + `.brx` GUI app transpilation & syn validation |
-| **TOTAL** | **15 Test Suites** | **106** | **100% Passed (Semua Hijau)** |
+| **Todo App Integration** | `tests/integration_todo_app_test.rs` | 11 | TodoApp struct, tambah/hapus/hitung methods, `eframe::App` impl, headless main, `CargoBridge` build check |
+| **REST API Integration** | `tests/integration_rest_api_test.rs` | 11 | `HttpRequest`/`HttpResponse`/`ApiServer`, 200/401/404 dispatch routes, `CargoBridge` build check |
+| **Examples Integration** | `tests/examples_integration_tests.rs` | 5 | All 7 examples (`cli_algorithms`, `backend_api`, `todo_app`, `dashboard_gui`, `brui_xml_gui`, `multi_lib`, `object_handling`) transpile + `check()` green |
+| **TOTAL (core suites + new integration suites)** | **18 Test Suites** | **133** | **100% Passed (Semua Hijau)** |
+
+Full per-suite list lives in `docs/testing.md`.

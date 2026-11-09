@@ -1,0 +1,24 @@
+use RegisterForm
+
+view RegisterForm =>
+    <Panel class="screen">
+        <Col class="card">
+            <Text class="card_title">Create account</Text>
+            <Text class="card_subtitle">Join Bara Cloud in seconds</Text>
+            <Col class="form_box">
+                <Input class="input_field" bind={username} placeholder="Username" />
+                <Input class="input_field" bind={email} placeholder="Email address" />
+                <Input class="input_field" bind={password} placeholder="Password" />
+                <Button class="btn_primary" onClick={register()}>
+                    Register
+                </Button>
+                {if registered =>
+                    <Text class="status_ok">Account created successfully.</Text>
+                }
+                {if error_msg != "" =>
+                    <Text class="status_err">{error_msg}</Text>
+                }
+            </Col>
+            <Text class="auth_hint">Already have an account? Head over to the Sign In page.</Text>
+        </Col>
+    </Panel>

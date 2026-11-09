@@ -1,0 +1,28 @@
+use OverviewPage
+
+view OverviewPage =>
+    <Panel class="screen">
+        <Col class="card">
+            <Text class="card_title">{title}</Text>
+            <Text class="card_subtitle">{subtitle}</Text>
+            <Row class="slider_row">
+                <Text class="slider_label">Refresh every {refresh_interval}s</Text>
+                <Slider bind={refresh_interval} />
+            </Row>
+            <Row class="kpi_grid">
+                {for card in metrics =>
+                    <Col class="kpi_card">
+                        <Text class="kpi_title">{card.title}</Text>
+                        <Text class="kpi_value">{card.value}</Text>
+                        <Text class="kpi_change">{card.change}</Text>
+                    </Col>
+                }
+            </Row>
+            <Row class="section_header">
+                <Text class="section_title">Aggregates</Text>
+                <Button class="btn_secondary" onClick={refresh()}>
+                    Refresh
+                </Button>
+            </Row>
+        </Col>
+    </Panel>

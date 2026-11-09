@@ -1,0 +1,187 @@
+.dashboard_screen {
+    background: #0b0f19;
+    padding: 24px;
+}
+.main_layout {
+    gap: 16px;
+}
+.top_navbar {
+    justify-content: space-between;
+    align-items: center;
+}
+.brand_title {
+    font-size: 20px;
+    color: #f8fafc;
+    font-weight: bold;
+}
+.navbar_actions {
+    gap: 12px;
+    align-items: center;
+}
+.btn_primary {
+    background: #0284c7;
+    color: #ffffff;
+    padding: 6px 14px;
+    border-radius: 6px;
+}
+.tab_bar {
+    gap: 8px;
+}
+.tab_item {
+    background: #1e293b;
+    color: #94a3b8;
+    padding: 6px 12px;
+    border-radius: 6px;
+}
+.tab_active {
+    background: #0284c7;
+    color: #ffffff;
+}
+.page_col {
+    gap: 16px;
+}
+.page_title {
+    font-size: 18px;
+    color: #f1f5f9;
+    font-weight: bold;
+}
+.kpi_grid {
+    gap: 12px;
+}
+.kpi_card {
+    background: #111827;
+    padding: 16px;
+    border-radius: 8px;
+    gap: 6px;
+    border: 1px solid #1f2937;
+}
+.kpi_title {
+    font-size: 12px;
+    color: #9ca3af;
+}
+.kpi_value {
+    font-size: 22px;
+    font-weight: bold;
+    color: #ffffff;
+}
+.kpi_change {
+    font-size: 13px;
+    color: #34d399;
+}
+.section_header {
+    justify-content: space-between;
+    align-items: center;
+}
+.section_title {
+    font-size: 16px;
+    color: #f1f5f9;
+    font-weight: bold;
+}
+.btn_secondary {
+    background: #374151;
+    color: #d1d5db;
+    padding: 4px 10px;
+    border-radius: 6px;
+}
+.btn_danger {
+    background: #7f1d1d;
+    color: #fecaca;
+    padding: 4px 10px;
+    border-radius: 6px;
+}
+.log_scroll {
+    max-height: 280px;
+}
+.log_list {
+    gap: 8px;
+}
+.log_row {
+    background: #111827;
+    padding: 10px 14px;
+    border-radius: 6px;
+    gap: 12px;
+    align-items: center;
+}
+.log_time {
+    font-size: 12px;
+    color: #6b7280;
+}
+.log_action {
+    font-size: 13px;
+    color: #e5e7eb;
+}
+.log_status {
+    font-size: 12px;
+    color: #10b981;
+    background: #064e3b33;
+    padding: 2px 6px;
+    border-radius: 4px;
+}
+.screen {
+    background: #0b0f19;
+    padding: 24px;
+}
+.card {
+    background: #111827;
+    padding: 24px;
+    border-radius: 12px;
+    gap: 16px;
+    border: 1px solid #1f2937;
+}
+.card_title {
+    font-size: 20px;
+    color: #f8fafc;
+    font-weight: bold;
+}
+.card_subtitle {
+    font-size: 13px;
+    color: #9ca3af;
+}
+.form_box {
+    gap: 12px;
+}
+.form_row {
+    gap: 8px;
+    align-items: center;
+}
+.input_field {
+    background: #1e293b;
+    color: #f8fafc;
+    padding: 8px 12px;
+    border-radius: 6px;
+}
+.auth_hint {
+    font-size: 12px;
+    color: #94a3b8;
+}
+.status_ok {
+    font-size: 13px;
+    color: #34d399;
+}
+.status_err {
+    font-size: 13px;
+    color: #f87171;
+}
+.slider_row {
+    gap: 12px;
+    align-items: center;
+}
+.slider_label {
+    font-size: 13px;
+    color: #d1d5db;
+}
+.filter_box {
+    gap: 10px;
+}
+.user_row {
+    background: #1e293b;
+    padding: 10px 14px;
+    border-radius: 8px;
+    gap: 12px;
+    align-items: center;
+}
+.user_name {
+    font-size: 14px;
+    color: #f1f5f9;
+    font-weight: bold;
+}

@@ -1,0 +1,13 @@
+type XmlDemoApp =
+    title: str = "Brui XML Demo"
+    username: str = ""
+    counter: int = 0
+
+    increment() =>
+        counter = counter + 1
+
+    reset() =>
+        counter = 0
+
+    login() =>
+        username = ""

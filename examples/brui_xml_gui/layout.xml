@@ -1,0 +1,16 @@
+<view name="XmlDemoApp">
+  <Panel class="screen">
+    <Col class="main">
+      <Text class="title">{title}</Text>
+      <Row class="form_box">
+        <Input bind="username" placeholder="Enter name..." />
+        <Button onClick="login()">Login</Button>
+      </Row>
+      <Row class="counter_box">
+        <Text class="counter_label">Count: {counter}</Text>
+        <Button onClick="increment()">+</Button>
+        <Button onClick="reset()">Reset</Button>
+      </Row>
+    </Col>
+  </Panel>
+</view>

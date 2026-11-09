@@ -8,6 +8,7 @@ pub enum TypeAnnotation {
     Bool,
     List(Box<TypeAnnotation>),
     Map(Box<TypeAnnotation>, Box<TypeAnnotation>),
+    Tuple(Vec<TypeAnnotation>),
     Custom(String),
     Unit,
     Dyn,
@@ -23,6 +24,10 @@ impl fmt::Display for TypeAnnotation {
             TypeAnnotation::Bool => write!(f, "bool"),
             TypeAnnotation::List(inner) => write!(f, "Vec<{inner}>"),
             TypeAnnotation::Map(k, v) => write!(f, "std::collections::HashMap<{k}, {v}>"),
+            TypeAnnotation::Tuple(items) => {
+                let s = items.iter().map(|i| i.to_string()).collect::<Vec<_>>().join(", ");
+                write!(f, "({s})")
+            }
             TypeAnnotation::Custom(name) => write!(f, "{name}"),
             TypeAnnotation::Unit => write!(f, "()"),
             TypeAnnotation::Dyn => write!(f, "BaraDyn"),
@@ -71,6 +76,7 @@ pub struct FnDef {
     pub body: Block,
     pub is_async: bool,
     pub receiver: ReceiverKind,
+    pub is_pub: bool,
     pub span: (usize, usize),
 }
 
@@ -79,6 +85,37 @@ pub struct TypeDef {
     pub name: String,
     pub fields: Vec<FieldDef>,
     pub methods: Vec<FnDef>,
+    pub is_pub: bool,
+    pub span: (usize, usize),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct EnumVariant {
+    pub name: String,
+    pub fields: Vec<TypeAnnotation>,
+    pub span: (usize, usize),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct EnumDef {
+    pub name: String,
+    pub variants: Vec<EnumVariant>,
+    pub is_pub: bool,
+    pub span: (usize, usize),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ModDef {
+    pub name: String,
+    pub is_pub: bool,
+    pub span: (usize, usize),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MatchArm {
+    pub pattern: Expr,
+    pub guard: Option<Expr>,
+    pub body: Expr,
     pub span: (usize, usize),
 }
 
@@ -86,6 +123,7 @@ pub struct TypeDef {
 pub struct UseStmt {
     pub path: Vec<String>,
     pub alias: Option<String>,
+    pub is_pub: bool,
     pub span: (usize, usize),
 }
 
@@ -254,6 +292,12 @@ pub enum Expr {
         span: (usize, usize),
     },
     Block(Block, (usize, usize)),
+    Tuple(Vec<Expr>, (usize, usize)),
+    Match {
+        expr: Box<Expr>,
+        arms: Vec<MatchArm>,
+        span: (usize, usize),
+    },
     RawRust(String, (usize, usize)),
 }
 
@@ -285,6 +329,8 @@ impl Expr {
             | Expr::Closure { span: s, .. }
             | Expr::Ternary { span: s, .. }
             | Expr::Block(_, s)
+            | Expr::Tuple(_, s)
+            | Expr::Match { span: s, .. }
             | Expr::RawRust(_, s) => *s,
         }
     }
@@ -321,6 +367,11 @@ pub enum Stmt {
         body: Block,
         span: (usize, usize),
     },
+    Match {
+        expr: Expr,
+        arms: Vec<MatchArm>,
+        span: (usize, usize),
+    },
     Break((usize, usize)),
     Continue((usize, usize)),
     RawRust(String, (usize, usize)),
@@ -334,6 +385,7 @@ impl Stmt {
             | Stmt::If { span: s, .. }
             | Stmt::For { span: s, .. }
             | Stmt::While { span: s, .. }
+            | Stmt::Match { span: s, .. }
             | Stmt::Break(s)
             | Stmt::Continue(s)
             | Stmt::RawRust(_, s) => *s,
@@ -396,8 +448,10 @@ pub struct ViewDef {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Item {
     Use(UseStmt),
+    Mod(ModDef),
     Fn(FnDef),
     Type(TypeDef),
+    Enum(EnumDef),
     View(ViewDef),
     StyleBlock(String, (usize, usize)),
     TopLevelStmt(Stmt),

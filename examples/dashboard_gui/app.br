@@ -1,0 +1,35 @@
+use MetricCard
+use ActivityLog
+
+type DashboardApp =
+    current_page: str = "overview"
+    app_title = "Bara Cloud Monitoring"
+    search_query = ""
+    cpu_percent = 42
+    mem_percent = 68
+    total_requests = 128450
+
+    metrics: [MetricCard] = [
+        MetricCard(title = "Total API Requests", value = "128,450", change = "+14.2%", is_positive = true),
+        MetricCard(title = "Avg Latency", value = "24.5 ms", change = "-3.1 ms", is_positive = true),
+        MetricCard(title = "Error Rate", value = "0.04%", change = "-0.01%", is_positive = true),
+        MetricCard(title = "Memory Utilization", value = "68%", change = "+2.4%", is_positive = false)
+    ]
+
+    activities: [ActivityLog] = [
+        ActivityLog(id = 1, timestamp = "12:45:10", action = "Auto-scaled cluster workers +2", status = "Success"),
+        ActivityLog(id = 2, timestamp = "12:43:02", action = "Database read-replica synced", status = "Success"),
+        ActivityLog(id = 3, timestamp = "12:40:55", action = "TLS certificate auto-renewed", status = "Success"),
+        ActivityLog(id = 4, timestamp = "12:38:12", action = "Node-04 high memory alert cleared", status = "Resolved")
+    ]
+
+    navigate(page: str) -> str =>
+        current_page = page.clone()
+        return page
+
+    simulate_traffic() =>
+        total_requests = total_requests + 250
+        cpu_percent = (cpu_percent + 3) % 95
+
+    clear_activities() =>
+        activities = []

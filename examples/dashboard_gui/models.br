@@ -1,0 +1,11 @@
+type MetricCard =
+    title: str
+    value: str
+    change: str
+    is_positive = true
+
+type ActivityLog =
+    id: int
+    timestamp: str
+    action: str
+    status: str

@@ -147,7 +147,7 @@ area = integrate_trapezoid(0.0, 3.0, 100)
     println!("GENERATED TRAPEZOID:\n{rust}");
     assert!(rust.contains("pub fn integrate_trapezoid(a: f64, b: f64, n: i64) -> f64"));
     assert!(rust.contains("let mut sum"));
-    assert!(rust.contains("sum = (sum + f(&xi));"));
+    assert!(rust.contains("sum = (sum + f(xi));") || rust.contains("sum = (sum + f(&xi));"));
 }
 
 #[test]

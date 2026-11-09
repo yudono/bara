@@ -3,5 +3,8 @@ name = "todo_app"
 version = "0.1.0"
 entry = "main.br"
 
+[presets]
+gui = true
+
 [dependencies]
 serde = "1.0"

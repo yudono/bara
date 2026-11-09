@@ -1,0 +1,91 @@
+// multi_lib: import/export demo across dot-path modules.
+// `use libs.math_ops` (dot and `::` paths both parse) merges the module
+// into this crate. The `raw_rust` stub below declares the matching
+// (empty) Rust modules so the emitted `use libs::...;` lines resolve;
+// Bara itself needs no stub since it merges all files into one program.
+use libs.math_ops
+use libs.string_utils
+pub use libs.models
+
+raw_rust {
+    pub mod libs { pub mod math_ops {} pub mod string_utils {} pub mod models {} }
+}
+
+print("== multi_lib demo ==")
+
+// --- pure multi-file functions ---
+fib10 = fibonacci(10)
+print("fibonacci(10):", fib10)
+
+g = gcd(48, 18)
+print("gcd(48, 18):", g)
+
+// --- value type with methods (cross-module calls stay unqualified) ---
+v1 = Vec2(x = 3, y = 4)
+v2 = Vec2(x = 1, y = 2)
+v3 = v1.add(v2)
+print("v3:", v3.x, v3.y)
+print("v3 length_sq:", v3.length_sq())
+
+// --- borrowed string params: pass variables, not literals ---
+alice_name = "Alice"
+loud = shout(alice_name)
+print("shout:", loud)
+
+slug_in = "Hello World"
+slug = slugify(slug_in)
+print("slug:", slug)
+
+mark = "!"
+msg = greeting(alice_name, mark)
+print(msg)
+
+// --- enum construction + match statement and match expression ---
+status = TextStatus::Rich(msg)
+label = label_of(status)
+print("label:", label)
+match status
+    TextStatus::Plain => print("status plain")
+    TextStatus::Rich(s) => print("rich:", s)
+    TextStatus::Empty => print("status empty")
+
+// --- generic Option handling; `Option::None` pattern (bare `None`
+// --- followed by `=>` would parse as a closure) ---
+maybe_age = find_age(alice_name)
+match maybe_age
+    Option::Some(a) => print("age:", a)
+    Option::None => print("age unknown")
+
+// --- generic Result handling: Ok and Err paths ---
+score_text = "88"
+res = check_score(score_text)
+match res
+    Result::Ok(v) => print("score:", v)
+    Result::Err(e) => print("score error:", e)
+
+empty_text = ""
+res2 = check_score(empty_text)
+match res2
+    Result::Ok(v) => print("score:", v)
+    Result::Err(e) => print("score error:", e)
+
+// --- tuple return, field access, and match destructuring ---
+pair = make_pair()
+code0 = raw_rust { pair.0 }
+text1 = raw_rust { pair.1.clone() }
+print("pair parts:", code0, text1)
+match pair
+    (code, text) => print(code, text)
+
+// --- enum with payloads + struct with method ---
+c1 = Shape::Circle(2.5)
+print("shape:", describe(c1))
+r1 = Shape::Rect(3.0, 4.0)
+print("shape:", describe(r1))
+p0 = Shape::Point
+print("shape:", describe(p0))
+
+u1 = User(name = "Ayu", age = 30, active = true)
+print("user:", u1.summary())
+u2 = User(name = "Budi", age = 25, active = false)
+print("user:", u2.summary())

@@ -1,0 +1,72 @@
+fibonacci(n: int) -> int =>
+    if n <= 1 =>
+        return n
+    a = 0
+    b = 1
+    i = 2
+    while i <= n =>
+        next_val = a + b
+        a = b
+        b = next_val
+        i = i + 1
+    return b
+
+is_prime(n: int) -> bool =>
+    if n <= 1 =>
+        return false
+    if n <= 3 =>
+        return true
+    if n % 2 == 0 or n % 3 == 0 =>
+        return false
+    i = 5
+    while i * i <= n =>
+        if n % i == 0 or n % (i + 2) == 0 =>
+            return false
+        i = i + 6
+    return true
+
+sieve_primes(limit: int) -> [int] =>
+    primes = []
+    num = 2
+    while num <= limit =>
+        if is_prime(num) =>
+            primes.push(num)
+        num = num + 1
+    return primes
+
+bubble_sort(arr: [int]) -> [int] =>
+    res = arr.clone()
+    n = res.len()
+    i = 0
+    while i < n =>
+        j = 0
+        while j < n - i - 1 =>
+            if res[j] > res[j + 1] =>
+                temp = res[j]
+                res[j] = res[j + 1]
+                res[j + 1] = temp
+            j = j + 1
+        i = i + 1
+    return res
+
+binary_search(arr: [int], target: int) -> int =>
+    low = 0
+    high = arr.len() - 1
+    while low <= high =>
+        mid = low + (high - low) / 2
+        if arr[mid] == target =>
+            return mid
+        elif arr[mid] < target =>
+            low = mid + 1
+        else =>
+            high = mid - 1
+    return -1
+
+gcd(a: int, b: int) -> int =>
+    x = a
+    y = b
+    while y != 0 =>
+        t = y
+        y = x % y
+        x = t
+    return x

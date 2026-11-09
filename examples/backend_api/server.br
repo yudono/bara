@@ -1,0 +1,36 @@
+type HttpRequest =
+    method: str
+    path: str
+    token = ""
+    body = ""
+
+type HttpResponse =
+    status_code: int
+    content_type = "application/json"
+    body: str
+
+type ApiServer =
+    route_count = 0
+    cached_users = ["Alice", "Bob", "Charlie"]
+
+    dispatch(req: HttpRequest) -> HttpResponse =>
+        route_count = route_count + 1
+
+        if req.path == "/health" =>
+            return HttpResponse(status_code = 200, body = "{{\"status\": \"ok\", \"service\": \"bara-api\"}}")
+
+        if req.token == "" =>
+            return HttpResponse(status_code = 401, body = "{{\"error\": \"Unauthorized: missing token\"}}")
+
+        if req.path == "/api/users" =>
+            if req.method == "GET" =>
+                return HttpResponse(status_code = 200, body = "{{\"count\": 3, \"users\": [\"Alice\", \"Bob\", \"Charlie\"]}}")
+            elif req.method == "POST" =>
+                return HttpResponse(status_code = 201, body = "{{\"status\": \"created\", \"user\": \"NewUser\"}}")
+            else =>
+                return HttpResponse(status_code = 405, body = "{{\"error\": \"Method not allowed\"}}")
+
+        if req.path == "/api/metrics" =>
+            return HttpResponse(status_code = 200, body = "{{\"uptime_sec\": 3600, \"requests_handled\": 42}}")
+
+        return HttpResponse(status_code = 404, body = "{{\"error\": \"Not Found\"}}")

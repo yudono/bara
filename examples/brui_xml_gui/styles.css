@@ -1,0 +1,28 @@
+.screen {
+  background: #0b0f19;
+  padding: 24px;
+}
+.main {
+  gap: 16px;
+}
+.title {
+  font-size: 20px;
+  color: #f8fafc;
+  font-weight: bold;
+}
+.form_box {
+  gap: 10px;
+}
+.counter_box {
+  gap: 10px;
+}
+.counter_label {
+  font-size: 14px;
+  color: #e2e8f0;
+}
+.btn {
+  background: #0284c7;
+  color: #ffffff;
+  padding: 6px 14px;
+  border-radius: 6px;
+}

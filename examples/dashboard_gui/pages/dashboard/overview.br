@@ -1,0 +1,16 @@
+use MetricCard
+
+type OverviewPage =
+    title = "Cluster Overview"
+    subtitle = "Real-time aggregate of all regions"
+    refresh_interval = 30
+
+    metrics: [MetricCard] = [
+        MetricCard(title = "Total API Requests", value = "128,450", change = "+14.2%", is_positive = true),
+        MetricCard(title = "Avg Latency", value = "24.5 ms", change = "-3.1 ms", is_positive = true),
+        MetricCard(title = "Error Rate", value = "0.04%", change = "-0.01%", is_positive = true),
+        MetricCard(title = "Memory Utilization", value = "68%", change = "+2.4%", is_positive = false)
+    ]
+
+    refresh() =>
+        title = "Cluster Overview"

@@ -1,0 +1,35 @@
+// models: enums, structs, generic Option/Result returns, tuples.
+// `Option::Some` / `Result::Ok` / `Result::Err` paths are used for
+// construction so the values resolve in every compiler pass.
+pub enum Shape =
+    Circle(float)
+    Rect(float, float)
+    Point
+
+pub type User =
+    name: str
+    age: int
+    active: bool
+
+    summary() -> str =>
+        return "User {name} age {age} active {active}"
+
+pub find_age(name: str) -> Option<int> =>
+    if name.len() == 5 =>
+        return Option::Some(95)
+    return None
+
+pub check_score(text: str) -> Result<int, str> =>
+    if text.len() == 0 =>
+        return Result::Err("empty input")
+    return Result::Ok(text.len())
+
+pub make_pair() -> (int, str) =>
+    return (42, "answer")
+
+pub describe(shape: Shape) -> str =>
+    label = match shape
+        Shape::Circle(r) => "circle"
+        Shape::Rect(w, h) => "rect"
+        Shape::Point => "point"
+    return label

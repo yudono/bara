@@ -1,0 +1,27 @@
+use LoginForm
+
+view LoginForm =>
+    <Panel class="screen">
+        <Col class="card">
+            <Text class="card_title">Welcome back</Text>
+            <Text class="card_subtitle">Sign in to Bara Cloud</Text>
+            <Col class="form_box">
+                <Input class="input_field" bind={username} placeholder="Username" />
+                <Input class="input_field" bind={password} placeholder="Password" />
+                <Row class="form_row">
+                    <Checkbox bind={remember_me} />
+                    <Text class="auth_hint">Remember me</Text>
+                </Row>
+                <Button class="btn_primary" onClick={login()}>
+                    Sign In
+                </Button>
+                {if logged_in =>
+                    <Text class="status_ok">Signed in successfully.</Text>
+                }
+                {if error_msg != "" =>
+                    <Text class="status_err">{error_msg}</Text>
+                }
+            </Col>
+            <Text class="auth_hint">No account yet? Head over to the Register page.</Text>
+        </Col>
+    </Panel>

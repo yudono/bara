@@ -237,7 +237,7 @@ impl Stroke {
     }
 
     pub fn to_egui_code(&self) -> String {
-        format!("egui::Stroke::new({:.1}, {})", self.width, self.color.to_egui_code())
+        format!("egui::Stroke::new({:.1}_f32, {})", self.width, self.color.to_egui_code())
     }
 }
 
@@ -335,44 +335,59 @@ impl CssStyleSheet {
 
         let mut frame_calls = Vec::new();
 
-        // Background
+        // Opacity 0..1 — modulate fill alpha (egui 0.27 Frame has no opacity field).
+        let opacity = Self::parse_opacity(props.get("opacity").map(|s| s.as_str()).unwrap_or("1"));
+
+        // Background / background-color
         if let Some(bg) = props.get("background").or_else(|| props.get("background-color")) {
             if let Some(c) = Color::parse(bg) {
+                let c = if opacity < 1.0 {
+                    let a = ((c.a as f32 * opacity).clamp(0.0, 255.0)) as u8;
+                    Color::new(c.r, c.g, c.b, a)
+                } else {
+                    c
+                };
                 frame_calls.push(format!("fill({})", c.to_egui_code()));
             }
         }
 
-        // Padding
+        // Padding -> inner_margin
         if let Some(pad) = props.get("padding") {
             if let Some(m) = Margin::parse(pad) {
                 frame_calls.push(format!("inner_margin({})", m.to_egui_code()));
             }
         }
 
+        // Margin -> outer_margin (egui 0.27 Frame supports outer_margin)
+        if let Some(margin_val) = props.get("margin") {
+            if let Some(m) = Margin::parse(margin_val) {
+                frame_calls.push(format!("outer_margin({})", m.to_egui_code()));
+            }
+        }
+
         // Border radius
         if let Some(br) = props.get("border-radius") {
-            let r = br
-                .trim_end_matches("px")
-                .trim_end_matches("rem")
-                .trim_end_matches("em")
-                .parse::<f32>()
-                .unwrap_or(0.0);
+            let r = Self::parse_size(br).unwrap_or(0.0);
             frame_calls.push(format!("rounding(egui::Rounding::same({:.1}))", r));
         }
 
-        // Border / stroke
+        // Border / stroke (border, or border-width + border-color)
         if let Some(border) = props.get("border") {
             if let Some(s) = Stroke::parse(border) {
                 frame_calls.push(format!("stroke({})", s.to_egui_code()));
             }
         } else if let Some(width_str) = props.get("border-width") {
-            let w = width_str.trim_end_matches("px").parse::<f32>().unwrap_or(1.0);
+            let w = Self::parse_size(width_str).unwrap_or(1.0);
             let color = if let Some(c_str) = props.get("border-color") {
                 Color::parse(c_str).unwrap_or(Color::rgb(0, 0, 0))
             } else {
                 Color::rgb(0, 0, 0)
             };
-            frame_calls.push(format!("stroke(egui::Stroke::new({:.1}, {}))", w, color.to_egui_code()));
+            frame_calls.push(format!("stroke(egui::Stroke::new({:.1}_f32, {}))", w, color.to_egui_code()));
+        } else if let Some(color_str) = props.get("border-color") {
+            if let Some(c) = Color::parse(color_str) {
+                frame_calls.push(format!("stroke(egui::Stroke::new(1.0_f32, {}))", c.to_egui_code()));
+            }
         }
 
         // Shadow
@@ -395,20 +410,21 @@ impl CssStyleSheet {
         let props = self.resolve_properties(classes);
         let mut mods = Vec::new();
 
+        let opacity = Self::parse_opacity(props.get("opacity").map(|s| s.as_str()).unwrap_or("1"));
         if let Some(color_val) = props.get("color") {
             if let Some(c) = Color::parse(color_val) {
+                let c = if opacity < 1.0 {
+                    let a = ((c.a as f32 * opacity).clamp(0.0, 255.0)) as u8;
+                    Color::new(c.r, c.g, c.b, a)
+                } else {
+                    c
+                };
                 mods.push(format!("color({})", c.to_egui_code()));
             }
         }
 
         if let Some(fs) = props.get("font-size") {
-            let size = fs
-                .trim_end_matches("px")
-                .trim_end_matches("pt")
-                .trim_end_matches("rem")
-                .trim_end_matches("em")
-                .parse::<f32>()
-                .unwrap_or(14.0);
+            let size = Self::parse_size(fs).unwrap_or(14.0);
             mods.push(format!("size({:.1})", size));
         }
 
@@ -449,7 +465,7 @@ impl CssStyleSheet {
             .or_else(|| props.get("row-gap"))
             .or_else(|| props.get("column-gap"))
         {
-            gap.trim_end_matches("px").trim_end_matches("rem").parse::<f32>().ok()
+            Self::parse_size(gap)
         } else {
             None
         }
@@ -458,7 +474,7 @@ impl CssStyleSheet {
     pub fn get_max_height(&self, classes: &[&str]) -> Option<f32> {
         let props = self.resolve_properties(classes);
         if let Some(h) = props.get("height").or_else(|| props.get("max-height")) {
-            h.trim_end_matches("px").parse::<f32>().ok()
+            Self::parse_size(h)
         } else {
             None
         }
@@ -467,9 +483,87 @@ impl CssStyleSheet {
     pub fn get_max_width(&self, classes: &[&str]) -> Option<f32> {
         let props = self.resolve_properties(classes);
         if let Some(w) = props.get("width").or_else(|| props.get("max-width")) {
-            w.trim_end_matches("px").parse::<f32>().ok()
+            Self::parse_size(w)
         } else {
             None
         }
+    }
+
+    /// Exact `width` property (falls back to None if only max-width is set).
+    pub fn get_width(&self, classes: &[&str]) -> Option<f32> {
+        let props = self.resolve_properties(classes);
+        props.get("width").and_then(|w| Self::parse_size(w))
+    }
+
+    /// Exact `height` property (falls back to None if only max-height is set).
+    pub fn get_height(&self, classes: &[&str]) -> Option<f32> {
+        let props = self.resolve_properties(classes);
+        props.get("height").and_then(|h| Self::parse_size(h))
+    }
+
+    /// `opacity: 0..1` (defaults to None when unset).
+    pub fn get_opacity(&self, classes: &[&str]) -> Option<f32> {
+        let props = self.resolve_properties(classes);
+        props
+            .get("opacity")
+            .and_then(|v| v.trim().parse::<f32>().ok())
+            .map(|o| o.clamp(0.0, 1.0))
+    }
+
+    /// `align-items` (flex cross-axis alignment hint).
+    pub fn get_align_items(&self, classes: &[&str]) -> Option<String> {
+        let props = self.resolve_properties(classes);
+        props.get("align-items").cloned().or_else(|| props.get("align_items").cloned())
+    }
+
+    /// `justify-content` (flex main-axis alignment hint).
+    pub fn get_justify_content(&self, classes: &[&str]) -> Option<String> {
+        let props = self.resolve_properties(classes);
+        props
+            .get("justify-content")
+            .cloned()
+            .or_else(|| props.get("justify_content").cloned())
+    }
+
+    /// Parse a CSS length into logical pixels. Supports px, pt, %, rem, em and bare numbers.
+    pub fn parse_size(val: &str) -> Option<f32> {
+        let s = val.trim().to_lowercase();
+        // Take first token (e.g. "6px 14px" -> "6px") for robustness.
+        let tok = s.split_whitespace().next().unwrap_or("").trim();
+        if tok.is_empty() || tok == "auto" || tok == "none" {
+            return None;
+        }
+        if let Some(num) = tok.strip_suffix("px") {
+            return num.trim().parse::<f32>().ok();
+        }
+        if let Some(num) = tok.strip_suffix("pt") {
+            return num.trim().parse::<f32>().ok();
+        }
+        if let Some(num) = tok.strip_suffix("rem") {
+            return num.trim().parse::<f32>().ok().map(|v| v * 16.0);
+        }
+        if let Some(num) = tok.strip_suffix("em") {
+            return num.trim().parse::<f32>().ok().map(|v| v * 16.0);
+        }
+        if let Some(num) = tok.strip_suffix('%') {
+            // Percentages have no absolute meaning in egui; treat as unset.
+            let _ = num.trim().parse::<f32>().ok()?;
+            return None;
+        }
+        tok.parse::<f32>().ok()
+    }
+
+    fn parse_opacity(val: &str) -> f32 {
+        val.trim()
+            .trim_end_matches('%')
+            .parse::<f32>()
+            .map(|o| {
+                if val.trim().ends_with('%') {
+                    (o / 100.0).clamp(0.0, 1.0)
+                } else {
+                    o.clamp(0.0, 1.0)
+                }
+            })
+            .unwrap_or(1.0)
     }
 }

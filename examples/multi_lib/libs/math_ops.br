@@ -1,0 +1,34 @@
+// math_ops: pure functions plus a small value type with methods.
+// Everything is `pub` so other modules can use it. Bara merges all
+// modules into a single Rust file, so calls stay unqualified.
+pub fibonacci(n: int) -> int =>
+    if n <= 1 =>
+        return n
+    a = 0
+    b = 1
+    i = 2
+    while i <= n =>
+        next_val = a + b
+        a = b
+        b = next_val
+        i = i + 1
+    return b
+
+pub gcd(a: int, b: int) -> int =>
+    x = a
+    y = b
+    while y != 0 =>
+        t = y
+        y = x % y
+        x = t
+    return x
+
+pub type Vec2 =
+    x: int
+    y: int
+
+    add(other: Vec2) -> Vec2 =>
+        return Vec2(x = x + other.x, y = y + other.y)
+
+    length_sq() -> int =>
+        return x * x + y * y

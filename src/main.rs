@@ -28,13 +28,14 @@ SUBCOMMANDS:
 OPTIONS:
     --release                Build in release mode (optimizations enabled)
     --offline                Run cargo in offline mode
+    --emit-rs [DIR]          Emit transpiled Rust code to directory (default: emit_rs)
     -o, --output <PATH>      Output path for binary or transpiled Rust file
     -h, --help               Print help information
     -V, --version            Print version information
 
 EXAMPLES:
-    bara init my_todo
-    cd my_todo && bara check
+    bara init my_app
+    cd my_app && bara check
     bara transpile main.br -o output.rs
     bara run main.br
     bara add serde "1.0"
@@ -161,6 +162,11 @@ fn main() {
             let entry = parse_entry_arg(&args, 2);
             let release = has_flag(&args, "--release");
             let offline = has_flag(&args, "--offline");
+            let emit_rs = has_flag(&args, "--emit-rs");
+            let emit_rs_dir = parse_flag_val(&args, "--emit-rs")
+                .filter(|v| !v.starts_with('-'))
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("emit_rs"));
             let output_path = parse_flag_val(&args, "-o").or_else(|| parse_flag_val(&args, "--output"));
 
             let root = current_project_root(entry.as_deref());
@@ -174,6 +180,23 @@ fn main() {
                             eprintln!("Failed to copy binary to {}: {e}", dest.display());
                         } else {
                             println!("✓ Binary copied to {}", dest.display());
+                        }
+                    }
+                    if emit_rs {
+                        match bridge.emit_rs_to(&emit_rs_dir, entry.as_deref()) {
+                            Ok(files) => {
+                                println!(
+                                    "✓ Emitted {} transpiled Rust file(s) to '{}':",
+                                    files.len(),
+                                    emit_rs_dir.display()
+                                );
+                                for f in files {
+                                    println!("  - {}", f.display());
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!("Failed to emit Rust files:\n{e}");
+                            }
                         }
                     }
                 }

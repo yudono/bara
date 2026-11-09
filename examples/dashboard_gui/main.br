@@ -1,0 +1,7 @@
+use brui
+use DashboardApp
+use "styles.css"
+
+brui.provider("egui")
+app = brui.load("shell.brx")
+app.run("Bara Cloud Monitoring Dashboard", width = 850, height = 620)

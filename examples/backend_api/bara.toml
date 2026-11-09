@@ -1,0 +1,9 @@
+[package]
+name = "backend_api"
+version = "0.1.0"
+entry = "main.br"
+
+[presets]
+serde = true
+
+[dependencies]

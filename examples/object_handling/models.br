@@ -1,0 +1,43 @@
+// models: structs with methods, &self vs &mut self receivers,
+// nested struct composition. The analyzer picks the receiver
+// automatically: mutating methods get &mut self, readers get &self.
+type BankAccount =
+    owner: str
+    balance: int
+
+    deposit(amount: int) =>
+        balance = balance + amount
+
+    withdraw(amount: int) -> bool =>
+        if balance >= amount =>
+            balance = balance - amount
+            return true
+        return false
+
+    is_empty() -> bool =>
+        return balance == 0
+
+    show() -> str =>
+        return "{owner}: {balance}"
+
+type Counter =
+    value: int = 0
+
+    increment() =>
+        value = value + 1
+
+    add_many(n: int) =>
+        i = 0
+        while i < n =>
+            value = value + 1
+            i = i + 1
+
+    get() -> int =>
+        return value
+
+type Pair =
+    first: BankAccount
+    second: BankAccount
+
+    total() -> int =>
+        return first.balance + second.balance

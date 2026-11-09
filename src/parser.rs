@@ -109,9 +109,17 @@ impl Parser {
             return Ok(Item::StyleBlock(c, span));
         }
 
-        // 2. Use statement
+        let is_pub = self.match_token(&TokenKind::Pub);
+
+        // 2. Mod declaration
+        if self.check(&TokenKind::Mod) {
+            let mod_def = self.parse_mod_def(true)?;
+            return Ok(Item::Mod(mod_def));
+        }
+
+        // 2.2 Use statement
         if self.check(&TokenKind::Use) {
-            let use_stmt = self.parse_use_stmt()?;
+            let use_stmt = self.parse_use_stmt(is_pub)?;
             return Ok(Item::Use(use_stmt));
         }
 
@@ -121,15 +129,21 @@ impl Parser {
             return Ok(Item::View(view));
         }
 
-        // 3. Type definition
+        // 3. Enum definition
+        if self.check(&TokenKind::Enum) {
+            let enum_def = self.parse_enum_def(true)?;
+            return Ok(Item::Enum(enum_def));
+        }
+
+        // 3.5 Type definition
         if self.check(&TokenKind::Type) {
-            let type_def = self.parse_type_def()?;
+            let type_def = self.parse_type_def(true)?;
             return Ok(Item::Type(type_def));
         }
 
-        // 4. Function definition: name(params) [-> ret] => body
+        // 4. Function definition: [pub] [fn] name(params) [-> ret] => body
         if self.is_function_def() {
-            let fn_def = self.parse_fn_def()?;
+            let fn_def = self.parse_fn_def(true)?;
             return Ok(Item::Fn(fn_def));
         }
 
@@ -139,11 +153,19 @@ impl Parser {
     }
 
     fn is_function_def(&self) -> bool {
-        let start_pos = if let TokenKind::Ident(s) = self.peek() {
-            if s == "fn" {
-                self.pos + 1
+        let mut cur = self.pos;
+        if cur < self.tokens.len() && self.tokens[cur].kind == TokenKind::Pub {
+            cur += 1;
+        }
+        let start_pos = if cur < self.tokens.len() {
+            if let TokenKind::Ident(s) = &self.tokens[cur].kind {
+                if s == "fn" {
+                    cur + 1
+                } else {
+                    cur
+                }
             } else {
-                self.pos
+                return false;
             }
         } else {
             return false;
@@ -184,17 +206,70 @@ impl Parser {
         false
     }
 
-    fn parse_use_stmt(&mut self) -> Result<UseStmt, String> {
+    fn parse_mod_def(&mut self, is_pub: bool) -> Result<ModDef, String> {
+        let span = self.current().span;
+        self.expect(&TokenKind::Mod)?;
+        let name = self.parse_ident_name()?;
+        self.match_token(&TokenKind::Semi);
+        Ok(ModDef { name, is_pub, span })
+    }
+
+    fn parse_use_stmt(&mut self, is_pub: bool) -> Result<UseStmt, String> {
         let span = self.current().span;
         self.expect(&TokenKind::Use)?;
 
-        let mut path = Vec::new();
-        let first_ident = self.parse_ident_name()?;
-        path.push(first_ident);
+        // Explicit stylesheet import: `use "styles.css"` (preferred, exact file).
+        if let TokenKind::Str(s) = self.peek() {
+            let lit = s.clone();
+            self.advance();
+            self.match_token(&TokenKind::Semi);
+            return Ok(UseStmt {
+                path: vec![lit],
+                alias: None,
+                is_pub,
+                span,
+            });
+        }
 
-        while self.match_token(&TokenKind::Dot) {
-            let seg = self.parse_ident_name()?;
-            path.push(seg);
+        let mut path = Vec::new();
+        let first_seg = if self.match_token(&TokenKind::Star) {
+            "*".to_string()
+        } else {
+            self.parse_ident_name()?
+        };
+        path.push(first_seg);
+
+        loop {
+            let is_colons = self.check(&TokenKind::Colon) && self.peek_next() == &TokenKind::Colon;
+            let is_dot = self.check(&TokenKind::Dot);
+
+            if is_colons {
+                self.advance();
+                self.advance();
+            } else if is_dot {
+                self.advance();
+            } else {
+                break;
+            }
+
+            if self.match_token(&TokenKind::Star) {
+                path.push("*".to_string());
+                break;
+            } else if self.match_token(&TokenKind::LBrace) {
+                let mut group = Vec::new();
+                while !self.check(&TokenKind::RBrace) && !self.check(&TokenKind::Eof) {
+                    group.push(self.parse_ident_name()?);
+                    if !self.match_token(&TokenKind::Comma) {
+                        break;
+                    }
+                }
+                self.expect(&TokenKind::RBrace)?;
+                path.push(format!("{{{}}}", group.join(", ")));
+                break;
+            } else {
+                let seg = self.parse_ident_name()?;
+                path.push(seg);
+            }
         }
 
         let alias = if self.match_token(&TokenKind::As) {
@@ -204,10 +279,81 @@ impl Parser {
         };
 
         self.match_token(&TokenKind::Semi);
-        Ok(UseStmt { path, alias, span })
+        Ok(UseStmt { path, alias, is_pub, span })
     }
 
-    fn parse_type_def(&mut self) -> Result<TypeDef, String> {
+    fn parse_enum_def(&mut self, is_pub: bool) -> Result<EnumDef, String> {
+        let span = self.current().span;
+        self.expect(&TokenKind::Enum)?;
+        let name = self.parse_ident_name()?;
+
+        self.match_token(&TokenKind::Eq);
+        self.match_token(&TokenKind::Colon);
+        self.skip_newlines();
+
+        let mut variants = Vec::new();
+        let is_braced = self.match_token(&TokenKind::LBrace);
+        let is_indented = if !is_braced {
+            self.match_token(&TokenKind::Indent)
+        } else {
+            false
+        };
+
+        while !self.check(&TokenKind::Eof) {
+            self.skip_newlines();
+            if is_braced && self.check(&TokenKind::RBrace) {
+                break;
+            }
+            if is_indented && self.check(&TokenKind::Dedent) {
+                break;
+            }
+            if !is_braced && !is_indented && (self.check(&TokenKind::Newline) || self.check(&TokenKind::Eof)) {
+                break;
+            }
+
+            let var_span = self.current().span;
+            let var_name = self.parse_ident_name()?;
+            let mut fields = Vec::new();
+
+            if self.match_token(&TokenKind::LParen) {
+                while !self.check(&TokenKind::RParen) && !self.check(&TokenKind::Eof) {
+                    fields.push(self.parse_type_annotation()?);
+                    if !self.match_token(&TokenKind::Comma) {
+                        break;
+                    }
+                }
+                self.expect(&TokenKind::RParen)?;
+            }
+
+            variants.push(EnumVariant {
+                name: var_name,
+                fields,
+                span: var_span,
+            });
+
+            self.match_token(&TokenKind::Comma);
+            self.skip_newlines();
+
+            if !is_braced && !is_indented {
+                break;
+            }
+        }
+
+        if is_braced {
+            self.expect(&TokenKind::RBrace)?;
+        } else if is_indented {
+            self.expect(&TokenKind::Dedent)?;
+        }
+
+        Ok(EnumDef {
+            name,
+            variants,
+            is_pub,
+            span,
+        })
+    }
+
+    fn parse_type_def(&mut self, is_pub: bool) -> Result<TypeDef, String> {
         let span = self.current().span;
         self.expect(&TokenKind::Type)?;
         let name = self.parse_ident_name()?;
@@ -255,7 +401,7 @@ impl Parser {
 
             // Check if it's a method
             if self.is_function_def() {
-                let m = self.parse_fn_def()?;
+                let m = self.parse_fn_def(true)?;
                 methods.push(m);
             } else {
                 // It's a field
@@ -290,6 +436,7 @@ impl Parser {
             name,
             fields,
             methods,
+            is_pub,
             span,
         })
     }
@@ -559,7 +706,7 @@ impl Parser {
         }
     }
 
-    fn parse_fn_def(&mut self) -> Result<FnDef, String> {
+    fn parse_fn_def(&mut self, is_pub: bool) -> Result<FnDef, String> {
         let span = self.current().span;
         if let TokenKind::Ident(s) = self.peek() {
             if s == "fn" {
@@ -616,15 +763,64 @@ impl Parser {
             body,
             is_async: false,
             receiver: ReceiverKind::None,
+            is_pub,
             span,
         })
     }
 
     fn parse_type_annotation(&mut self) -> Result<TypeAnnotation, String> {
+        // References: &T, &mut T
+        if self.match_token(&TokenKind::Amp) {
+            let is_mut = if let TokenKind::Ident(s) = self.peek() {
+                if s == "mut" {
+                    self.advance();
+                    true
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+            let inner = self.parse_type_annotation()?;
+            let prefix = if is_mut { "&mut " } else { "&" };
+            return Ok(TypeAnnotation::Custom(format!("{prefix}{inner}")));
+        }
+
         match self.peek() {
             TokenKind::Ident(name) => {
-                let n = name.clone();
+                let mut n = name.clone();
                 self.advance();
+
+                while (self.check(&TokenKind::Colon) && self.peek_next() == &TokenKind::Colon)
+                    || self.check(&TokenKind::Dot)
+                {
+                    if self.match_token(&TokenKind::Dot) {
+                        let seg = self.parse_ident_name()?;
+                        n.push_str("::");
+                        n.push_str(&seg);
+                    } else {
+                        self.advance();
+                        self.advance();
+                        let seg = self.parse_ident_name()?;
+                        n.push_str("::");
+                        n.push_str(&seg);
+                    }
+                }
+
+                // Check for generic type arguments: e.g. Option<int>, Result<str, int>, Arc<Mutex<int>>
+                if self.match_token(&TokenKind::Lt) {
+                    let mut args = Vec::new();
+                    while !self.check(&TokenKind::Gt) && !self.check(&TokenKind::Eof) {
+                        args.push(self.parse_type_annotation()?);
+                        if !self.match_token(&TokenKind::Comma) {
+                            break;
+                        }
+                    }
+                    self.expect(&TokenKind::Gt)?;
+                    let args_str = args.iter().map(|a| a.to_string()).collect::<Vec<_>>().join(", ");
+                    return Ok(TypeAnnotation::Custom(format!("{n}<{args_str}>")));
+                }
+
                 match n.as_str() {
                     "int" => Ok(TypeAnnotation::Int),
                     "float" => Ok(TypeAnnotation::Float),
@@ -650,8 +846,24 @@ impl Parser {
             }
             TokenKind::LParen => {
                 self.advance();
-                self.expect(&TokenKind::RParen)?;
-                Ok(TypeAnnotation::Unit)
+                if self.match_token(&TokenKind::RParen) {
+                    return Ok(TypeAnnotation::Unit);
+                }
+                let first = self.parse_type_annotation()?;
+                if self.match_token(&TokenKind::Comma) {
+                    let mut items = vec![first];
+                    while !self.check(&TokenKind::RParen) && !self.check(&TokenKind::Eof) {
+                        items.push(self.parse_type_annotation()?);
+                        if !self.match_token(&TokenKind::Comma) {
+                            break;
+                        }
+                    }
+                    self.expect(&TokenKind::RParen)?;
+                    Ok(TypeAnnotation::Tuple(items))
+                } else {
+                    self.expect(&TokenKind::RParen)?;
+                    Ok(first)
+                }
             }
             other => Err(format!(
                 "Expected type annotation, found '{other}' at {line}:{col}",
@@ -777,6 +989,12 @@ impl Parser {
             self.expect(&TokenKind::FatArrow)?;
             let body = self.parse_block()?;
             return Ok(Stmt::While { cond, body, span });
+        }
+
+        // Match statement
+        if self.check(&TokenKind::Match) {
+            let (target, arms) = self.parse_match_common()?;
+            return Ok(Stmt::Match { expr: target, arms, span });
         }
 
         // Expression or Assignment
@@ -1262,16 +1480,115 @@ impl Parser {
                 continue;
             }
 
+            // Path access: expr::member
+            if self.check(&TokenKind::Colon) && self.peek_next() == &TokenKind::Colon {
+                self.advance();
+                self.advance();
+                let member = self.parse_ident_name()?;
+                let mut segments = match expr {
+                    Expr::PathAccess { segments, .. } => segments,
+                    Expr::Ident(name, _) => vec![name],
+                    _ => vec![],
+                };
+                segments.push(member);
+                expr = Expr::PathAccess {
+                    segments,
+                    span,
+                };
+                continue;
+            }
+
             break;
         }
 
         Ok(expr)
     }
 
+    fn parse_match_common(&mut self) -> Result<(Expr, Vec<MatchArm>), String> {
+        let span = self.current().span;
+        self.expect(&TokenKind::Match)?;
+        let target = self.parse_expr()?;
+
+        self.match_token(&TokenKind::FatArrow);
+        self.skip_newlines();
+
+        let is_braced = self.match_token(&TokenKind::LBrace);
+        let is_indented = if !is_braced {
+            self.match_token(&TokenKind::Indent)
+        } else {
+            false
+        };
+
+        let mut arms = Vec::new();
+        while !self.check(&TokenKind::Eof) {
+            self.skip_newlines();
+            if is_braced && self.check(&TokenKind::RBrace) {
+                break;
+            }
+            if is_indented && self.check(&TokenKind::Dedent) {
+                break;
+            }
+
+            let arm_span = self.current().span;
+            let pattern = self.parse_expr()?;
+
+            let guard = if self.match_token(&TokenKind::If) {
+                Some(self.parse_expr()?)
+            } else {
+                None
+            };
+
+            self.expect(&TokenKind::FatArrow)?;
+            self.skip_newlines();
+
+            let body = if self.match_token(&TokenKind::Indent) {
+                let mut stmts = Vec::new();
+                while !self.check(&TokenKind::Dedent) && !self.check(&TokenKind::Eof) {
+                    stmts.push(self.parse_stmt()?);
+                    self.skip_newlines();
+                }
+                self.expect(&TokenKind::Dedent)?;
+                Expr::Block(Block { stmts, span: arm_span }, arm_span)
+            } else {
+                self.parse_expr()?
+            };
+
+            arms.push(MatchArm {
+                pattern,
+                guard,
+                body,
+                span: arm_span,
+            });
+
+            self.match_token(&TokenKind::Comma);
+            self.skip_newlines();
+
+            if !is_braced && !is_indented {
+                break;
+            }
+        }
+
+        if is_braced {
+            self.expect(&TokenKind::RBrace)?;
+        } else if is_indented {
+            self.expect(&TokenKind::Dedent)?;
+        }
+
+        Ok((target, arms))
+    }
+
     fn parse_primary(&mut self) -> Result<Expr, String> {
         let span = self.current().span;
 
         match self.peek() {
+            TokenKind::Match => {
+                let (target, arms) = self.parse_match_common()?;
+                Ok(Expr::Match {
+                    expr: Box::new(target),
+                    arms,
+                    span,
+                })
+            }
             TokenKind::Int(val) => {
                 let v = *val;
                 self.advance();
@@ -1307,9 +1624,24 @@ impl Parser {
             }
             TokenKind::LParen => {
                 self.advance();
-                let expr = self.parse_expr()?;
-                self.expect(&TokenKind::RParen)?;
-                Ok(expr)
+                if self.match_token(&TokenKind::RParen) {
+                    return Ok(Expr::Tuple(Vec::new(), span));
+                }
+                let first = self.parse_expr()?;
+                if self.match_token(&TokenKind::Comma) {
+                    let mut items = vec![first];
+                    while !self.check(&TokenKind::RParen) && !self.check(&TokenKind::Eof) {
+                        items.push(self.parse_expr()?);
+                        if !self.match_token(&TokenKind::Comma) {
+                            break;
+                        }
+                    }
+                    self.expect(&TokenKind::RParen)?;
+                    Ok(Expr::Tuple(items, span))
+                } else {
+                    self.expect(&TokenKind::RParen)?;
+                    Ok(first)
+                }
             }
             TokenKind::LBracket => {
                 // List literal [a, b, c]
