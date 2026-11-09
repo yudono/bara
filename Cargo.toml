@@ -1,0 +1,25 @@
+[package]
+name = "bara"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "=1.0.104"
+thiserror = "=1.0.69"
+syn = { version = "=2.0.119", features = ["full", "extra-traits", "parsing", "printing"] }
+quote = "=1.0.47"
+proc-macro2 = "=1.0.107"
+prettyplease = "=0.2.37"
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.154"
+
+[dev-dependencies]
+tempfile = "=3.27.0"
+
+[[bin]]
+name = "bara"
+path = "src/main.rs"
+
+[lib]
+name = "bara"
+path = "src/lib.rs"

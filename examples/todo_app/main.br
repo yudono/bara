@@ -1,0 +1,6 @@
+use brui
+use TodoApp
+
+brui.provider("egui")
+app = brui.load("todo.brx")
+app.run("Bara Todo Desktop", width = 450, height = 600)

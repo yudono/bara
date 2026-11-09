@@ -1,0 +1,5 @@
+target/
+.bara_cache/
+**/*.rs.bk
+*.swp
+*.DS_Store
