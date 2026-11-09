@@ -9,6 +9,16 @@ pub struct Codegen<'a> {
     indent_level: usize,
     jsx_for_var: Option<String>,
     struct_defs: HashMap<String, TypeDef>,
+    /// Type names that have a `view` (renderable child components).
+    component_views: HashSet<String>,
+    /// View currently being emitted (parent scope for component instances).
+    current_view: Option<String>,
+    /// Per (parent view, child tag) instance counters (match analyzer injection).
+    component_counters: HashMap<(String, String), usize>,
+    /// True while rendering inside `__render_as_child` (Panel becomes a frame).
+    in_child: bool,
+    /// Collected `useEffect` snippets, drained at the end of `update()`.
+    pending_effects: Vec<String>,
 }
 
 impl<'a> Codegen<'a> {
@@ -19,6 +29,11 @@ impl<'a> Codegen<'a> {
             indent_level: 0,
             jsx_for_var: None,
             struct_defs: HashMap::new(),
+            component_views: HashSet::new(),
+            current_view: None,
+            component_counters: HashMap::new(),
+            in_child: false,
+            pending_effects: Vec::new(),
         }
     }
 
@@ -43,6 +58,13 @@ impl<'a> Codegen<'a> {
         for item in &program.items {
             if let Item::Type(t) = item {
                 self.struct_defs.insert(t.name.clone(), t.clone());
+            }
+        }
+
+        self.component_views.clear();
+        for item in &program.items {
+            if let Item::View(v) = item {
+                self.component_views.insert(v.type_name.clone());
             }
         }
 
@@ -280,9 +302,30 @@ impl<'a> Codegen<'a> {
         self.writeln("}");
         self.writeln("");
 
-        // Constructor helper: TypeName(args)
-        let constructor_params: Vec<String> = t
-            .fields
+        // Constructor helper: TypeName(args). Hidden React state fields
+        // (`__child_*`, `__br_mounted`, `__fx_sig_*`) are never params; when
+        // present we build via assignment so `Drop` types keep working
+        // (struct-update syntax cannot move fields out of a Drop value).
+        let visible_fields: Vec<&FieldDef> =
+            t.fields.iter().filter(|f| !is_hidden_field(&f.name)).collect();
+        let ctor_pairs: Vec<(String, String)> = visible_fields
+            .iter()
+            .map(|f| {
+                let ty_str = f
+                    .ty
+                    .as_ref()
+                    .map(|ty| ty.to_string())
+                    .unwrap_or_else(|| "String".to_string());
+                let expr = if ty_str == "String" {
+                    format!("{}.into()", f.name)
+                } else {
+                    f.name.clone()
+                };
+                (f.name.clone(), expr)
+            })
+            .collect();
+
+        let constructor_params: Vec<String> = visible_fields
             .iter()
             .map(|f| {
                 let ty_str = f
@@ -298,23 +341,6 @@ impl<'a> Codegen<'a> {
             })
             .collect();
 
-        let constructor_fields: Vec<String> = t
-            .fields
-            .iter()
-            .map(|f| {
-                let ty_str = f
-                    .ty
-                    .as_ref()
-                    .map(|ty| ty.to_string())
-                    .unwrap_or_else(|| "String".to_string());
-                if ty_str == "String" {
-                    format!("{}: {}.into()", f.name, f.name)
-                } else {
-                    format!("{}: {}", f.name, f.name)
-                }
-            })
-            .collect();
-
         self.writeln(&format!("#[allow(non_snake_case)]"));
         self.writeln(&format!(
             "pub fn {}({}) -> {} {{",
@@ -322,8 +348,25 @@ impl<'a> Codegen<'a> {
             constructor_params.join(", "),
             t.name
         ));
+
         self.indent_level += 1;
-        self.writeln(&format!("{} {{ {} }}", t.name, constructor_fields.join(", ")));
+        let has_hidden = t.fields.iter().any(|f| is_hidden_field(&f.name));
+        if ctor_pairs.is_empty() && !has_hidden {
+            self.writeln(&format!("{}::default()", t.name));
+        } else if has_hidden {
+            // Assignment form: works with Drop types (no partial moves).
+            self.writeln(&format!("let mut __s = {}::default();", t.name));
+            for (name, expr) in &ctor_pairs {
+                self.writeln(&format!("__s.{name} = {expr};"));
+            }
+            self.writeln("__s");
+        } else {
+            let inits: Vec<String> = ctor_pairs
+                .iter()
+                .map(|(name, expr)| format!("{name}: {expr}"))
+                .collect();
+            self.writeln(&format!("{} {{ {} }}", t.name, inits.join(", ")));
+        }
         self.indent_level -= 1;
         self.writeln("}");
         self.writeln("");
@@ -492,18 +535,155 @@ impl<'a> Codegen<'a> {
 
     fn emit_view(&mut self, view: &ViewDef, css: &CssStyleSheet) {
         self.writeln(&format!("// @line: {}", view.span.0));
+        self.current_view = Some(view.type_name.clone());
+        self.component_counters.clear();
+
+        let (has_mount, has_update, has_unmount) = self.lifecycle_flags(&view.type_name);
+        let n_effects = Self::count_view_effects(&view.root);
+        let needs_mounted = has_mount || has_update || n_effects > 0;
+
         self.writeln(&format!("impl eframe::App for {} {{", view.type_name));
         self.indent_level += 1;
         self.writeln("fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {");
         self.indent_level += 1;
 
+        self.pending_effects.clear();
+        self.in_child = false;
         self.emit_jsx_element(&view.root, css, "ctx", "ui");
+        self.emit_react_epilogue(&view.type_name, has_mount, has_update, needs_mounted);
 
         self.indent_level -= 1;
         self.writeln("}");
         self.indent_level -= 1;
         self.writeln("}");
         self.writeln("");
+
+        // Child-component renderer: parents embed `<Tag/>` via this method so
+        // child state (persisted in `self.__child_*` on the PARENT) is kept.
+        self.writeln(&format!("impl {} {{", view.type_name));
+        self.indent_level += 1;
+        self.writeln("pub fn __render_as_child(&mut self, ui: &mut egui::Ui) {");
+        self.indent_level += 1;
+        self.pending_effects.clear();
+        // Instance indices must restart: same walk, same numbering as update().
+        self.component_counters.clear();
+        let prev_child = self.in_child;
+        self.in_child = true;
+        self.emit_jsx_element(&view.root, css, "ctx", "ui");
+        self.emit_react_epilogue(&view.type_name, has_mount, has_update, needs_mounted);
+        self.in_child = prev_child;
+        self.indent_level -= 1;
+        self.writeln("}");
+        self.indent_level -= 1;
+        self.writeln("}");
+        self.writeln("");
+
+        if has_unmount {
+            self.writeln(&format!("impl Drop for {} {{", view.type_name));
+            self.indent_level += 1;
+            self.writeln("fn drop(&mut self) {");
+            self.indent_level += 1;
+            self.writeln("self.onUnmount();");
+            self.indent_level -= 1;
+            self.writeln("}");
+            self.indent_level -= 1;
+            self.writeln("}");
+            self.writeln("");
+        }
+
+        self.current_view = None;
+    }
+
+    /// Emit deferred effects + lifecycle calls at the end of `update()` or
+    /// `__render_as_child()`. Effects run in tree order, then `onUpdate()`
+    /// (or `onMount()` on the first frame), then the mount flag is set.
+    fn emit_react_epilogue(
+        &mut self,
+        type_name: &str,
+        has_mount: bool,
+        has_update: bool,
+        needs_mounted: bool,
+    ) {
+        let _ = type_name;
+        let effects = std::mem::take(&mut self.pending_effects);
+        for snippet in effects {
+            self.writeln(&snippet);
+        }
+        if has_mount && has_update {
+            self.writeln("if !self.__br_mounted { self.onMount(); } else { self.onUpdate(); }");
+        } else if has_mount {
+            self.writeln("if !self.__br_mounted { self.onMount(); }");
+        } else if has_update {
+            self.writeln("if self.__br_mounted { self.onUpdate(); }");
+        }
+        if needs_mounted {
+            self.writeln("self.__br_mounted = true;");
+        }
+    }
+
+    fn lifecycle_flags(&self, type_name: &str) -> (bool, bool, bool) {
+        if let Some(t) = self.struct_defs.get(type_name) {
+            let mut mount = false;
+            let mut update = false;
+            let mut unmount = false;
+            for m in &t.methods {
+                match m.name.as_str() {
+                    "onMount" => mount = true,
+                    "onUpdate" => update = true,
+                    "onUnmount" => unmount = true,
+                    _ => {}
+                }
+            }
+            (mount, update, unmount)
+        } else {
+            (false, false, false)
+        }
+    }
+
+    fn count_view_effects(root: &JsxElement) -> usize {
+        let mut n = 0;
+        Self::count_effects_in_children(&root.children, &mut n);
+        n
+    }
+
+    fn count_effects_in_children(children: &[JsxChild], n: &mut usize) {
+        for child in children {
+            match child {
+                JsxChild::Effect { .. } => {
+                    *n += 1;
+                }
+                JsxChild::Element(e) => Self::count_effects_in_children(&e.children, n),
+                JsxChild::If { then_child, else_child, .. } => {
+                    Self::count_effects_in_child(then_child, n);
+                    if let Some(ec) = else_child {
+                        Self::count_effects_in_child(ec, n);
+                    }
+                }
+                JsxChild::For { body, .. } => {
+                    Self::count_effects_in_child(body, n);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn count_effects_in_child(child: &JsxChild, n: &mut usize) {
+        match child {
+            JsxChild::Effect { .. } => {
+                *n += 1;
+            }
+            JsxChild::Element(e) => Self::count_effects_in_children(&e.children, n),
+            JsxChild::If { then_child, else_child, .. } => {
+                Self::count_effects_in_child(then_child, n);
+                if let Some(ec) = else_child {
+                    Self::count_effects_in_child(ec, n);
+                }
+            }
+            JsxChild::For { body, .. } => {
+                Self::count_effects_in_child(body, n);
+            }
+            _ => {}
+        }
     }
 
     fn emit_jsx_element(
@@ -590,9 +770,44 @@ impl<'a> Codegen<'a> {
 
         let class_refs: Vec<&str> = class_names.iter().map(|s| s.as_str()).collect();
 
+        // React-style child component: `<Tag .../>` where Tag names a struct
+        // with a view. Props are assigned, then the persisted child instance
+        // (kept in `self.__child_<Tag>_<n>` by the analyzer) renders itself.
+        if !is_builtin_brui_tag(tag)
+            && self.struct_defs.contains_key(tag)
+            && self.component_views.contains(tag)
+        {
+            self.emit_component_element(elem, css, ui_var, &class_refs);
+            return;
+        }
+
         match tag {
             "Panel" => {
                 let frame_opt = css.get_frame_code(&class_refs);
+                if self.in_child {
+                    // Nested render: a second CentralPanel is illegal in egui,
+                    // so child roots render as framed vertical containers.
+                    let gap_opt = css.get_spacing(&class_refs);
+                    if let Some(fc) = &frame_opt {
+                        self.writeln(&format!("{fc}.show({ui_var}, |{ui_var}| {{"));
+                        self.indent_level += 1;
+                    }
+                    self.writeln(&format!("{ui_var}.vertical(|{ui_var}| {{"));
+                    self.indent_level += 1;
+                    if let Some(gap) = gap_opt {
+                        self.writeln(&format!("{ui_var}.spacing_mut().item_spacing.y = {:.1};", gap));
+                    }
+                    for child in &elem.children {
+                        self.emit_jsx_child(child, css, ui_var);
+                    }
+                    self.indent_level -= 1;
+                    self.writeln("});");
+                    if frame_opt.is_some() {
+                        self.indent_level -= 1;
+                        self.writeln("});");
+                    }
+                    return;
+                }
                 let frame_str = if let Some(fc) = frame_opt {
                     format!(".frame({fc})")
                 } else {
@@ -991,10 +1206,89 @@ impl<'a> Codegen<'a> {
         }
     }
 
+    /// Render a React-style child component: assign props to the persisted
+    /// `self.__child_<Tag>_<n>` instance, then let it render itself inline.
+    fn emit_component_element(
+        &mut self,
+        elem: &JsxElement,
+        css: &CssStyleSheet,
+        ui_var: &str,
+        class_refs: &[&str],
+    ) {
+        let tag = elem.tag.as_str();
+        let parent = self.current_view.clone().unwrap_or_default();
+        let key = (parent, tag.to_string());
+        let idx = *self.component_counters.get(&key).unwrap_or(&0);
+        self.component_counters.insert(key, idx + 1);
+        let field = child_field_name(tag, idx);
+
+        const NON_PROPS: &[&str] = &[
+            "class", "bind", "onClick", "placeholder", "name", "value", "progress",
+            "percent", "size", "amount", "space", "src", "source", "path", "image",
+            "url", "file",
+        ];
+        for attr in &elem.attributes {
+            if NON_PROPS.contains(&attr.name.as_str()) {
+                continue;
+            }
+            match &attr.value {
+                JsxAttrValue::Expr(e) => {
+                    let v = self.expr_to_string(e);
+                    self.writeln(&format!("self.{field}.{} = {v};", attr.name));
+                }
+                JsxAttrValue::Lit(s) => {
+                    let is_str = self
+                        .struct_defs
+                        .get(tag)
+                        .and_then(|t| t.fields.iter().find(|f| f.name == attr.name))
+                        .map(|f| f.ty == Some(TypeAnnotation::Str))
+                        .unwrap_or(true);
+                    if is_str {
+                        self.writeln(&format!(
+                            "self.{field}.{} = \"{}\".to_string();",
+                            attr.name,
+                            s.escape_default()
+                        ));
+                    } else {
+                        self.writeln(&format!("self.{field}.{} = {};", attr.name, s));
+                    }
+                }
+            }
+        }
+
+        let frame_opt = css.get_frame_code(class_refs);
+        if let Some(fc) = frame_opt {
+            self.writeln(&format!("{fc}.show({ui_var}, |{ui_var}| {{"));
+            self.indent_level += 1;
+            self.writeln(&format!("self.{field}.__render_as_child({ui_var});"));
+            self.indent_level -= 1;
+            self.writeln("});");
+        } else {
+            self.writeln(&format!("self.{field}.__render_as_child({ui_var});"));
+        }
+    }
+
     fn emit_jsx_child(&mut self, child: &JsxChild, css: &CssStyleSheet, ui_var: &str) {
         match child {
             JsxChild::Element(elem) => {
                 self.emit_jsx_element(elem, css, "ctx", ui_var);
+            }
+            JsxChild::Effect { deps, body, .. } => {
+                // Deferred to the end of update(): run on mount and whenever
+                // the debug signature of `deps` changes (React parity).
+                let idx = self.pending_effects.len();
+                let dep_codes: Vec<String> =
+                    deps.iter().map(|d| self.expr_to_string(d)).collect();
+                let sig_tuple = if dep_codes.is_empty() {
+                    "()".to_string()
+                } else {
+                    format!("({})", dep_codes.join(", "))
+                };
+                let body_code = self.expr_to_string(body);
+                let field = fx_sig_field_name(idx);
+                self.pending_effects.push(format!(
+                    "{{ let __sig = format!(\"{{:?}}\", {sig_tuple}); if !self.__br_mounted || self.{field} != __sig {{ {body_code}; self.{field} = __sig; }} }}"
+                ));
             }
             JsxChild::Text(t) => {
                 self.writeln(&format!("{ui_var}.label(\"{}\");", t.escape_default()));
@@ -1615,7 +1909,7 @@ impl<'a> Codegen<'a> {
         if args.is_empty() {
             return format!("{}::default()", t.name);
         }
-        let mut field_assigns = Vec::new();
+        let mut field_pairs: Vec<(String, String)> = Vec::new();
         for (idx, arg) in args.iter().enumerate() {
             match arg {
                 Expr::Assign { target, value, .. } => {
@@ -1638,7 +1932,7 @@ impl<'a> Codegen<'a> {
                         } else {
                             val_str
                         };
-                        field_assigns.push(format!("{field_name}: {final_val}"));
+                        field_pairs.push((field_name, final_val));
                     }
                 }
                 _ => {
@@ -1654,23 +1948,42 @@ impl<'a> Codegen<'a> {
                         } else {
                             val_str
                         };
-                        field_assigns.push(format!("{field_name}: {final_val}"));
+                        field_pairs.push((field_name.clone(), final_val));
                     }
                 }
             }
         }
 
-        if field_assigns.is_empty() {
-            format!("{}::default()", t.name)
-        } else if field_assigns.len() == t.fields.len() {
-            format!("{} {{ {} }}", t.name, field_assigns.join(", "))
-        } else {
-            format!(
-                "{} {{ {}, ..Default::default() }}",
-                t.name,
-                field_assigns.join(", ")
-            )
+        if field_pairs.is_empty() {
+            return format!("{}::default()", t.name);
         }
+        let has_drop = t.methods.iter().any(|m| m.name == "onUnmount");
+        if field_pairs.len() == t.fields.len() {
+            let assigns: Vec<String> = field_pairs
+                .iter()
+                .map(|(n, v)| format!("{n}: {v}"))
+                .collect();
+            return format!("{} {{ {} }}", t.name, assigns.join(", "));
+        }
+        if has_drop {
+            // Assignment form: struct-update syntax cannot move fields out of
+            // a Drop value, so build via assignment instead.
+            let mut stmts = vec![format!("let mut __s = {}::default();", t.name)];
+            for (n, v) in &field_pairs {
+                stmts.push(format!("__s.{n} = {v};"));
+            }
+            stmts.push("__s".to_string());
+            return format!("{{ {} }}", stmts.join(" "));
+        }
+        let assigns: Vec<String> = field_pairs
+            .iter()
+            .map(|(n, v)| format!("{n}: {v}"))
+            .collect();
+        format!(
+            "{} {{ {}, ..Default::default() }}",
+            t.name,
+            assigns.join(", ")
+        )
     }
 
     fn emit_print(&self, args: &[Expr]) -> String {

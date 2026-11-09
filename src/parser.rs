@@ -590,6 +590,27 @@ impl Parser {
                         iter,
                         body: Box::new(body),
                     });
+                } else if matches!(self.peek(), TokenKind::Ident(s) if s == "useEffect") {
+                    let eff_span = self.current().span;
+                    self.advance(); // consume `useEffect`
+                    self.expect(&TokenKind::LParen)?;
+                    let mut deps = Vec::new();
+                    while !self.check(&TokenKind::RParen) && !self.check(&TokenKind::Eof) {
+                        deps.push(self.parse_expr()?);
+                        if !self.match_token(&TokenKind::Comma) {
+                            break;
+                        }
+                    }
+                    self.expect(&TokenKind::RParen)?;
+                    self.expect(&TokenKind::FatArrow)?;
+                    let body = self.parse_expr()?;
+                    self.skip_jsx_whitespace();
+                    self.expect(&TokenKind::RBrace)?;
+                    children.push(JsxChild::Effect {
+                        deps,
+                        body,
+                        span: eff_span,
+                    });
                 } else {
                     let expr = self.parse_expr()?;
                     self.skip_jsx_whitespace();
@@ -673,6 +694,27 @@ impl Parser {
                     item,
                     iter,
                     body: Box::new(body),
+                })
+            } else if matches!(self.peek(), TokenKind::Ident(s) if s == "useEffect") {
+                let eff_span = self.current().span;
+                self.advance(); // consume `useEffect`
+                self.expect(&TokenKind::LParen)?;
+                let mut deps = Vec::new();
+                while !self.check(&TokenKind::RParen) && !self.check(&TokenKind::Eof) {
+                    deps.push(self.parse_expr()?);
+                    if !self.match_token(&TokenKind::Comma) {
+                        break;
+                    }
+                }
+                self.expect(&TokenKind::RParen)?;
+                self.expect(&TokenKind::FatArrow)?;
+                let body = self.parse_expr()?;
+                self.skip_jsx_whitespace();
+                self.expect(&TokenKind::RBrace)?;
+                Ok(JsxChild::Effect {
+                    deps,
+                    body,
+                    span: eff_span,
                 })
             } else {
                 let e = self.parse_expr()?;

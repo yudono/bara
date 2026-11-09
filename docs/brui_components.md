@@ -66,6 +66,47 @@ validator but currently render through the generic vertical-container fallback.
 - `{expr}` inside `Text`/`Button` children becomes `format!("{}", expr)` interpolation.
 - `{/* comment */}` JSX comments are ignored.
 
+## React-style components: props, state, hooks, lifecycle
+
+A view whose tag names a `type` **with its own `view`** is a child component.
+The parent embeds it with `<Tag .../>`; the compiler injects a persisted
+instance (`self.__child_<Tag>_<n>`) so child state survives re-renders:
+
+```jsx
+view DashboardApp =>
+    <Panel class="dashboard_screen">
+        {if LoginForm.logged_in =>
+            <OverviewPage />
+        else =>
+            <LoginForm />
+        }
+    </Panel>
+```
+
+- **Props**: plain attributes assign same-named child fields before each render
+  (`<Clicker label="Team A" step="1" />`). `bind`/`onClick` are not supported
+  on components (warning `W0006`); unknown attributes are rejected (`E0005`)
+  with the valid prop list. A component needs a backing
+  `type T = ...` (`E0004`) and cannot render itself (`E0007`).
+- **State**: child fields are state. Parents read child state directly with
+  `ChildType.field` / `ChildType.method()` — never write `__child_*`
+  identifiers yourself; the analyzer rewrites `ChildType.x` to the embedded
+  instance. Members not backed by an embedded component stay untouched, so
+  typos still surface as undeclared-identifier errors.
+- **`useEffect`**: `{useEffect(dep1, dep2) => effect_body()}` runs on mount
+  and whenever the debug signature of `deps` changes. Effects are collected
+  in tree order and executed at the end of `update()` (after paint, React
+  semantics). Hooks must be top-level — nesting inside `{for}`/`{if}` is
+  rejected (`E0006`), same rule as React.
+- **Lifecycle**: `onMount()` runs once after the first render, `onUpdate()`
+  runs at the end of later frames, `onUnmount()` runs via generated
+  `impl Drop`. They work for the running app view and for embedded children
+  (`__render_as_child`).
+- **Parent-child tree**: parents compose `<OverviewPage/>`, `<UsersPage/>`,
+  `<LoginForm/>`, `<RegisterForm/>` and switch them conditionally; each child
+  keeps its own state (see `examples/dashboard_gui/` — sidebar shell with
+  login-gated pages — and `examples/react_tree/`).
+
 ## Brui XML layout files
 
 `layout.xml` files use the same tags with string attributes:

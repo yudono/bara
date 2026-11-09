@@ -1,0 +1,51 @@
+use eframe
+use egui
+use DashboardApp
+
+view DashboardApp =>
+    <Panel class="dashboard_screen">
+        {if LoginForm.logged_in =>
+            <Row class="app_row">
+                <Col class="sidebar">
+                    <Text class="brand_title">{app_title}</Text>
+                    <Text class="log_status">Hi, {LoginForm.username}</Text>
+                    <Button class={current_page == "overview" ? "tab_item tab_active" : "tab_item"} onClick={navigate("overview")}>
+                        Overview
+                    </Button>
+                    <Button class={current_page == "users" ? "tab_item tab_active" : "tab_item"} onClick={navigate("users")}>
+                        Nodes ({UsersPage.users.len()})
+                    </Button>
+                    <Button class="tab_item" onClick={sign_out()}>
+                        Logout
+                    </Button>
+                </Col>
+                <Col class="main_col">
+                    {if current_page == "users" =>
+                        <UsersPage />
+                    else =>
+                        <OverviewPage />
+                    }
+                </Col>
+            </Row>
+        else =>
+            <Col class="auth_wrap">
+                <Text class="page_title">{app_title}</Text>
+                <Row class="tab_bar">
+                    <Button class={current_page == "register" ? "tab_item tab_active" : "tab_item"} onClick={navigate("register")}>
+                        Register
+                    </Button>
+                    <Button class={current_page == "register" ? "tab_item" : "tab_item tab_active"} onClick={navigate("login")}>
+                        Sign In
+                    </Button>
+                </Row>
+                {if current_page == "register" =>
+                    <RegisterForm />
+                else =>
+                    <LoginForm />
+                }
+                {if RegisterForm.registered =>
+                    <Text class="status_ok">Account created - please sign in.</Text>
+                }
+            </Col>
+        }
+    </Panel>

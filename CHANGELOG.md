@@ -3,6 +3,26 @@
 All notable changes to the Bara compiler & CLI are documented here.
 Versioning follows SemVer (`bara version` reads `Cargo.toml`).
 
+## [0.1.3] - 2026-11-09
+
+### Added (React-style UI model)
+- Child components: `<Tag .../>` where `Tag` names a `type` + `view` renders
+  inline with props; per-parent persisted instances keep child state.
+- Clean component references: write `ChildType.field` / `ChildType.method()`
+  in parent code — the analyzer maps them to the embedded instance
+  (no `__child_*` identifiers in user code; those stay compiler-internal).
+- `useEffect(dep, ...) => body` hooks (top-level only, `E0006` otherwise),
+  deferred to end of `update()` with signature-change detection.
+- Lifecycle methods `onMount` / `onUpdate` / `onUnmount` (via `Drop`).
+- Diagnostics: unknown prop `E0005`, missing backing type `E0004`,
+  self-recursion `E0007`.
+- Boot order: the app boots the view named by `brui.load("*.brx")` in the
+  entry program instead of the alphabetically first view.
+- New example `examples/react_tree/` (props, effects, lifecycle, tree).
+- Dashboard rewrite: `shell.brx` → `dashboard.brx` sidebar shell, pages are
+  real child components, login/register session + full node CRUD, all UI
+  functional.
+
 ## [0.1.2] - 2026-11-09
 
 ### Fixed (macOS GUI abort)

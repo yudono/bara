@@ -1,0 +1,21 @@
+use Clicker
+
+view Clicker =>
+    <Panel class="card">
+        <Col class="form_box">
+            <Text class="card_title">{label} ({count})</Text>
+            <Text class="card_subtitle">doubled {doubled} - step {step}</Text>
+            <Row class="form_row">
+                <Button class="btn_primary" onClick={increment()}>
+                    +1
+                </Button>
+                <Button class="btn_secondary" onClick={reset()}>
+                    Reset
+                </Button>
+            </Row>
+            {useEffect(count) => sync_doubled()}
+            {if ready =>
+                <Text class="status_ok">ready</Text>
+            }
+        </Col>
+    </Panel>

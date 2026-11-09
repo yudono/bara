@@ -428,6 +428,60 @@ pub enum JsxChild {
         iter: Expr,
         body: Box<JsxChild>,
     },
+    /// React-style effect hook: `{useEffect(dep1, dep2) => body}`.
+    /// Runs `body` on mount and whenever the debug signature of `deps`
+    /// changes. Collected by codegen and emitted at the end of `update()`.
+    Effect {
+        deps: Vec<Expr>,
+        body: Expr,
+        span: (usize, usize),
+    },
+}
+
+/// Name of the hidden per-view mount flag injected by the analyzer.
+pub const BR_MOUNTED_FIELD: &str = "__br_mounted";
+/// Prefix of hidden per-effect signature fields (`__fx_sig_0`, ...).
+pub const FX_SIG_PREFIX: &str = "__fx_sig_";
+/// Prefix of hidden persisted child-component fields (`__child_<Tag>_<n>`).
+pub const CHILD_FIELD_PREFIX: &str = "__child_";
+
+/// True for compiler-injected hidden fields (never emitted as constructor params).
+pub fn is_hidden_field(name: &str) -> bool {
+    name.starts_with("__")
+}
+
+/// True for native Brui container/control tags (as opposed to component tags
+/// that name a user `type` + `view` pair).
+pub fn is_builtin_brui_tag(tag: &str) -> bool {
+    matches!(
+        tag,
+        "Panel"
+            | "Col"
+            | "Row"
+            | "Scroll"
+            | "Text"
+            | "Button"
+            | "Input"
+            | "TextField"
+            | "Checkbox"
+            | "Slider"
+            | "Separator"
+            | "Wrap"
+            | "Container"
+            | "Image"
+            | "Progress"
+            | "Spacer"
+    )
+}
+
+/// Hidden field holding a persisted child component instance.
+pub fn child_field_name(tag: &str, idx: usize) -> String {
+    format!("{CHILD_FIELD_PREFIX}{tag}_{idx}")
+}
+
+/// Hidden field holding the debug signature of an effect's dependency list.
+pub fn fx_sig_field_name(idx: usize) -> String {
+    format!("{FX_SIG_PREFIX}{idx}")
 }
 
 #[derive(Debug, Clone, PartialEq)]

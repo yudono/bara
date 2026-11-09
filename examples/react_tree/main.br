@@ -1,0 +1,6 @@
+use ReactDemoApp
+use "styles.css"
+
+brui.provider("egui")
+app = brui.load("demo.brx")
+app.run("React Tree Demo", width = 640, height = 640)

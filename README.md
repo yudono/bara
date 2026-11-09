@@ -254,11 +254,12 @@ app.run("Bara Todo Desktop", width = 450, height = 600)
 ```
 examples/
   todo_app/            # Todo list: types + methods (todo.br) + native GUI (todo.brx)
-  dashboard_gui/       # Multi-page cloud dashboard: shell.brx + shared styles.css
+  dashboard_gui/     # Sidebar cloud dashboard: dashboard.brx shell + pages/** components
     pages/
-      auth/            # login (.br + .brx), register (.br + .brx)
-      dashboard/       # overview (.br + .brx), users (.br + .brx)
+      auth/          # login, register (.br + .brx each, auth session state)
+      dashboard/     # overview (metrics/logs/search), users (node CRUD) (.br + .brx each)
   brui_xml_gui/        # XML-layout variant: app.br + layout.xml + shared styles.css
+  react_tree/          # React-style tree: props, useEffect, lifecycle, parent/child
   cli_algorithms/      # Fibonacci, primes, sorting, binary search, GCD (CLI)
   backend_api/         # HttpRequest/Response + ApiServer dispatch demo (CLI)
   multi_lib/           # Multi-module imports: libs/{math_ops,string_utils,models}.br

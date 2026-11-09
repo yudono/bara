@@ -1,0 +1,25 @@
+use Clicker
+
+type ReactDemoApp =
+    title = "React-style Tree Demo"
+    clicks: int = 0
+    frames: int = 0
+    started = false
+    closed = false
+    log: [str] = []
+
+    poke() =>
+        clicks = clicks + 1
+
+    record_click() =>
+        log.push("poke")
+
+    onMount() =>
+        started = true
+        log.push("mounted")
+
+    onUpdate() =>
+        frames = frames + 1
+
+    onUnmount() =>
+        closed = true

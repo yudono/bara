@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use crate::analyzer::Analyzer;
-use crate::ast::{Item, Program};
+use crate::ast::{Expr, Item, Program, Stmt};
 use crate::codegen::Codegen;
 use crate::debugger::{BaraDebugger, Diagnostic, Severity};
 use crate::lexer::Lexer;
@@ -327,6 +327,30 @@ impl CargoBridge {
 
         let mut all_items: Vec<Item> = Vec::new();
 
+        // Boot order: the app boots the view named by `brui.load("*.brx")` in
+        // the entry program. Move that file's program first so its view is the
+        // `find_loaded_app_target` pick. Order-independent passes are unaffected.
+        let mut load_order: Vec<usize> = (0..bara_programs.len()).collect();
+        if let Some(loaded) = find_loaded_brx(&bara_programs) {
+            load_order.sort_by_key(|&pos| {
+                let (idx, _) = &bara_programs[pos];
+                let stem_match = sources
+                    .get(*idx)
+                    .and_then(|s| s.path.file_name())
+                    .and_then(|n| n.to_str())
+                    == Some(loaded.as_str());
+                if stem_match { 0 } else { 1 }
+            });
+        }
+        let ordered_programs: Vec<(usize, Program)> = load_order
+            .into_iter()
+            .map(|pos| {
+                let (idx, prog) = &bara_programs[pos];
+                (*idx, prog.clone())
+            })
+            .collect();
+        let bara_programs = ordered_programs;
+
         for source in sources {
             let ext = source
                 .path
@@ -463,21 +487,34 @@ impl CargoBridge {
                 }
             };
 
-            // Pre-register global types and functions from all files
+            parsed_sources.push((fname, program));
+        }
+
+        // Pre-register global types, views and fields from ALL files first, so
+        // multi-file projects (parent views using child components defined in
+        // other files) resolve no matter the file order.
+        for (_, program) in &parsed_sources {
             for item in &program.items {
                 match item {
                     Item::Type(t) => {
                         debugger.known_types.insert(t.name.clone());
                         debugger.known_globals.insert(t.name.clone());
+                        debugger.known_fields.insert(
+                            t.name.clone(),
+                            t.fields.iter().map(|f| f.name.clone()).collect(),
+                        );
                     }
                     Item::Fn(f) => {
                         debugger.known_globals.insert(f.name.clone());
                     }
+                    Item::View(v) => {
+                        debugger.known_types.insert(v.type_name.clone());
+                        debugger.known_globals.insert(v.type_name.clone());
+                        debugger.known_views.insert(v.type_name.clone());
+                    }
                     _ => {}
                 }
             }
-
-            parsed_sources.push((fname, program));
         }
 
         for (fname, program) in &parsed_sources {
@@ -879,6 +916,39 @@ fn capitalize_name(s: &str) -> String {
   match c.next() { Some(f) => format!("{}{}", f.to_ascii_uppercase(), c.collect::<String>()), None => "BruiView".to_string() }
 }
 
+/// Find the `.brx` file named by `brui.load("*.brx")` in any program's
+/// top-level statements, so the boot view can be ordered first.
+/// Handles both `brui.load("x.brx")` and `app = brui.load("x.brx")` forms.
+fn find_loaded_brx(bara_programs: &[(usize, Program)]) -> Option<String> {
+    for (_, prog) in bara_programs {
+        for item in &prog.items {
+            let call_opt = match item {
+                Item::TopLevelStmt(Stmt::Expr(Expr::MethodCall { method, args, .. })) => {
+                    if method == "load" { Some(args) } else { None }
+                }
+                Item::TopLevelStmt(Stmt::Assign { value, .. }) => {
+                    let inner: &Expr = value;
+                    if let Expr::MethodCall { method, args, .. } = inner {
+                        if method == "load" { Some(args) } else { None }
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            };
+            if let Some(args) = call_opt {
+                if let Some(first) = args.first() {
+                    if let Expr::Literal(crate::ast::Literal::Str(name), _) = first {
+                        if name.ends_with(".brx") {
+                            return Some(name.clone());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
+}
 /// Returns `Some(css_filename)` when a `use` path is an explicit stylesheet
 /// import (`use "styles.css"`, `use styles.css`, or shorthand `use styles`).
 /// Otherwise returns `None` (a normal Rust/module import).

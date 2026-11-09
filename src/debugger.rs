@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use crate::ast::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -101,6 +101,10 @@ pub struct BaraDebugger {
     pub diagnostics: Vec<Diagnostic>,
     pub known_types: HashSet<String>,
     pub known_globals: HashSet<String>,
+    /// Types that have a `view` (renderable React-style components).
+    pub known_views: HashSet<String>,
+    /// Struct field names per type (for child-component prop validation).
+    pub known_fields: HashMap<String, Vec<String>>,
 }
 
 impl BaraDebugger {
@@ -120,6 +124,8 @@ impl BaraDebugger {
             diagnostics: Vec::new(),
             known_types: HashSet::new(),
             known_globals,
+            known_views: HashSet::new(),
+            known_fields: HashMap::new(),
         }
     }
 
@@ -141,9 +147,16 @@ impl BaraDebugger {
                     }
                     self.known_types.insert(t.name.clone());
                     self.known_globals.insert(t.name.clone());
+                    self.known_fields.insert(
+                        t.name.clone(),
+                        t.fields.iter().map(|f| f.name.clone()).collect(),
+                    );
                 }
                 Item::Fn(f) => {
                     self.known_globals.insert(f.name.clone());
+                }
+                Item::View(v) => {
+                    self.known_views.insert(v.type_name.clone());
                 }
                 _ => {}
             }
@@ -339,6 +352,12 @@ impl BaraDebugger {
     fn check_expr(&mut self, expr: &Expr, scope: &HashSet<String>, struct_fields: &HashSet<String>) {
         match expr {
             Expr::Ident(name, span) => {
+                // Compiler-injected React state (`__child_*`, `__br_mounted`,
+                // `__fx_sig_*`) only exists after program merge; per-file
+                // diagnostics must not flag it.
+                if name.starts_with("__") {
+                    return;
+                }
                 if !scope.contains(name) && !struct_fields.contains(name) {
                     self.diagnostics.push(
                         Diagnostic::error(
@@ -446,17 +465,58 @@ impl BaraDebugger {
             );
         }
 
-        self.check_jsx_element(&v.root);
+        self.check_jsx_element_in(&v.root, Some(&v.type_name), 0);
     }
 
     fn check_jsx_element(&mut self, el: &JsxElement) {
+        self.check_jsx_element_in(el, None, 0);
+    }
+
+    /// `parent` is the enclosing view's type (for self-recursion detection);
+    /// `depth` counts `{if}`/`{for}` nesting (hooks must stay at depth 0).
+    fn check_jsx_element_in(
+        &mut self,
+        el: &JsxElement,
+        parent: Option<&str>,
+        depth: usize,
+    ) {
+        use crate::ast::is_builtin_brui_tag;
+
         let valid_brui_tags = [
             "Panel", "Col", "Row", "Scroll", "Text", "Button",
             "Input", "TextField", "Checkbox", "Slider", "Separator",
             "Wrap", "Container", "Image", "Progress", "Spacer",
         ];
 
-        if !valid_brui_tags.contains(&el.tag.as_str()) {
+        if is_builtin_brui_tag(&el.tag) {
+            // Native tag: nothing more to validate here.
+        } else if self.known_types.contains(&el.tag) && self.known_views.contains(&el.tag) {
+            // React-style child component: validate parent/child relation + props.
+            if Some(el.tag.as_str()) == parent {
+                self.diagnostics.push(
+                    Diagnostic::error(
+                        "E0007",
+                        format!(
+                            "Component '<{}>' cannot render itself (infinite tree)",
+                            el.tag
+                        ),
+                        el.span,
+                    )
+                    .with_suggestion("Extract the repeated part into a separate child component"),
+                );
+            } else {
+                self.check_component_props(el);
+            }
+        } else if self.known_views.contains(&el.tag) {
+            self.diagnostics.push(
+                Diagnostic::error(
+                    "E0004",
+                    format!("Component '<{}>' needs a backing 'type {} = ...'", el.tag, el.tag),
+                    el.span,
+                )
+                .with_suggestion(format!("Declare 'type {} = ...' with fields for its props", el.tag)),
+            );
+        } else if !valid_brui_tags.contains(&el.tag.as_str()) {
             self.diagnostics.push(
                 Diagnostic::warning(
                     "E0003",
@@ -471,21 +531,97 @@ impl BaraDebugger {
         }
 
         for child in &el.children {
-            self.check_jsx_child(child);
+            self.check_jsx_child_in(child, parent, depth);
+        }
+    }
+
+    /// Props are plain attributes: everything except behavioral/style keys must
+    /// name a field of the child struct.
+    fn check_component_props(&mut self, el: &JsxElement) {
+        const NON_PROPS: &[&str] = &[
+            "class", "bind", "onClick", "placeholder", "name", "value", "progress",
+            "percent", "size", "amount", "space", "src", "source", "path", "image",
+            "url", "file",
+        ];
+        let fields = self.known_fields.get(&el.tag).cloned().unwrap_or_default();
+        for attr in &el.attributes {
+            if NON_PROPS.contains(&attr.name.as_str()) {
+                if matches!(attr.name.as_str(), "bind" | "onClick") {
+                    self.diagnostics.push(
+                        Diagnostic::warning(
+                            "W0006",
+                            format!(
+                                "'{}' is not supported on component '<{}>': pass data via props instead",
+                                attr.name, el.tag
+                            ),
+                            attr.span,
+                        )
+                        .with_suggestion("Add a field to the child type and pass it as a plain attribute"),
+                    );
+                }
+                continue;
+            }
+            if attr.name.starts_with("__") {
+                continue;
+            }
+            if !fields.contains(&attr.name) {
+                self.diagnostics.push(
+                    Diagnostic::error(
+                        "E0005",
+                        format!(
+                            "Unknown prop '{}' on component '<{}>'",
+                            attr.name, el.tag
+                        ),
+                        attr.span,
+                    )
+                    .with_suggestion(format!(
+                        "Valid props are the '{}' fields: {}",
+                        el.tag,
+                        if fields.is_empty() {
+                            "(none)".to_string()
+                        } else {
+                            fields.join(", ")
+                        }
+                    )),
+                );
+            }
         }
     }
 
     fn check_jsx_child(&mut self, child: &JsxChild) {
+        self.check_jsx_child_in(child, None, 0);
+    }
+
+    fn check_jsx_child_in(
+        &mut self,
+        child: &JsxChild,
+        parent: Option<&str>,
+        depth: usize,
+    ) {
         match child {
-            JsxChild::Element(e) => self.check_jsx_element(e),
+            JsxChild::Element(e) => self.check_jsx_element_in(e, parent, depth),
             JsxChild::If { then_child, else_child, .. } => {
-                self.check_jsx_child(then_child);
+                self.check_jsx_child_in(then_child, parent, depth + 1);
                 if let Some(ec) = else_child {
-                    self.check_jsx_child(ec);
+                    self.check_jsx_child_in(ec, parent, depth + 1);
                 }
             }
             JsxChild::For { body, .. } => {
-                self.check_jsx_child(body);
+                self.check_jsx_child_in(body, parent, depth + 1);
+            }
+            JsxChild::Effect { span, .. } => {
+                // React parity: hooks live at the top level of a view, never
+                // inside loops or conditions.
+                if depth > 0 {
+                    self.diagnostics.push(
+                        Diagnostic::error(
+                            "E0006",
+                            "useEffect must be top-level and never inside {for} or {if}",
+                            *span,
+                        )
+                        .with_suggestion("Move the useEffect call to the top level of the view"),
+                    );
+                }
             }
             _ => {}
         }

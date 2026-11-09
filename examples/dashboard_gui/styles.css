@@ -40,6 +40,24 @@
 .page_col {
     gap: 16px;
 }
+.app_row {
+    gap: 16px;
+}
+.sidebar {
+    background: #111827;
+    padding: 20px;
+    border-radius: 12px;
+    gap: 12px;
+    border: 1px solid #1f2937;
+    max-width: 240px;
+}
+.main_col {
+    gap: 16px;
+}
+.auth_wrap {
+    gap: 16px;
+    align-items: center;
+}
 .page_title {
     font-size: 18px;
     color: #f1f5f9;

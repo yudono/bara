@@ -5,17 +5,25 @@ view OverviewPage =>
         <Col class="card">
             <Text class="card_title">{title}</Text>
             <Text class="card_subtitle">{subtitle}</Text>
+            <Row class="form_row">
+                <Input class="input_field" bind={search_query} placeholder="Search metrics or logs..." />
+                <Button class="btn_primary" onClick={simulate_traffic()}>
+                    Simulate
+                </Button>
+            </Row>
             <Row class="slider_row">
                 <Text class="slider_label">Refresh every {refresh_interval}s</Text>
                 <Slider bind={refresh_interval} />
             </Row>
             <Row class="kpi_grid">
                 {for card in metrics =>
-                    <Col class="kpi_card">
-                        <Text class="kpi_title">{card.title}</Text>
-                        <Text class="kpi_value">{card.value}</Text>
-                        <Text class="kpi_change">{card.change}</Text>
-                    </Col>
+                    {if raw_rust { self.search_query.is_empty() || card.title.contains(self.search_query.as_str()) } =>
+                        <Col class="kpi_card">
+                            <Text class="kpi_title">{card.title}</Text>
+                            <Text class="kpi_value">{card.value}</Text>
+                            <Text class="kpi_change">{card.change}</Text>
+                        </Col>
+                    }
                 }
             </Row>
             <Row class="section_header">
@@ -23,6 +31,22 @@ view OverviewPage =>
                 <Button class="btn_secondary" onClick={refresh()}>
                     Refresh
                 </Button>
+                <Button class="btn_secondary" onClick={clear_activities()}>
+                    Clear
+                </Button>
             </Row>
+            <Scroll class="log_scroll">
+                <Col class="log_list">
+                    {for item in activities =>
+                        {if raw_rust { self.search_query.is_empty() || item.action.contains(self.search_query.as_str()) } =>
+                            <Row class="log_row">
+                                <Text class="log_time">[{item.timestamp}]</Text>
+                                <Text class="log_action">{item.action}</Text>
+                                <Text class="log_status">{item.status}</Text>
+                            </Row>
+                        }
+                    }
+                </Col>
+            </Scroll>
         </Col>
     </Panel>

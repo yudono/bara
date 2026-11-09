@@ -86,6 +86,18 @@ impl Analyzer {
             }
         }
 
+        // Pass 1B: Collect standalone function signatures
+        for item in &program.items {
+            if let Item::Fn(f) = item {
+                self.functions.insert(f.name.clone(), f.clone());
+            }
+        }
+
+        // Pass 1C: React model — inject hidden state fields for child components,
+        // effect signatures and the mount flag into each viewed type. Runs before
+        // method analysis so method bodies may reference `__child_*` instances.
+        self.inject_react_state_fields(program);
+
         // Pass 2: Analyze methods within structs (self. field resolution, mutability, receiver)
         for item in &mut program.items {
             if let Item::Type(t) = item {
@@ -156,6 +168,167 @@ impl Analyzer {
         }
 
         Ok(())
+    }
+
+    /// React model (props / state / effects / lifecycle):
+    /// - Every `<Tag .../>` in a view whose tag names a struct WITH a view is a
+    ///   child component. The viewed (parent) type gets a hidden persisted field
+    ///   `__child_<Tag>_<n>` so child state survives re-renders.
+    /// - Every `{useEffect(...) => ...}` gets a hidden signature field, and views
+    ///   with effects or `onMount`/`onUpdate`/`onUnmount` methods get a hidden
+    ///   `__br_mounted` flag.
+    /// Rendering/validation of unknown tags is left to codegen/debugger.
+    fn inject_react_state_fields(&mut self, program: &mut Program) {
+        let view_names: HashSet<String> = program
+            .items
+            .iter()
+            .filter_map(|i| {
+                if let Item::View(v) = i {
+                    Some(v.type_name.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // Collect per-view usages first (immutable borrow), apply after.
+        let mut usages: Vec<(String, Vec<(String, (usize, usize))>, usize)> = Vec::new();
+        for item in &program.items {
+            if let Item::View(v) = item {
+                let mut comp_uses = Vec::new();
+                Self::collect_component_uses(&v.root, &mut comp_uses);
+                let mut n_effects = 0;
+                Self::count_effects(&v.root, &mut n_effects);
+                usages.push((v.type_name.clone(), comp_uses, n_effects));
+            }
+        }
+
+        for (view_type, comp_uses, n_effects) in usages {
+            let has_lifecycle = self
+                .structs
+                .get(&view_type)
+                .map(|t| {
+                    t.methods.iter().any(|m| {
+                        matches!(m.name.as_str(), "onMount" | "onUpdate" | "onUnmount")
+                    })
+                })
+                .unwrap_or(false);
+
+            let mut tag_counters: HashMap<String, usize> = HashMap::new();
+            let mut new_fields: Vec<FieldDef> = Vec::new();
+
+            for (tag, span) in comp_uses {
+                // Only real components (struct + view); anything else is left
+                // for codegen fallback rendering and debugger diagnostics.
+                if tag == view_type {
+                    continue; // self-recursion can never be a Rust field
+                }
+                if !self.structs.contains_key(&tag) || !view_names.contains(&tag) {
+                    continue;
+                }
+                let idx = *tag_counters.get(&tag).unwrap_or(&0);
+                tag_counters.insert(tag.clone(), idx + 1);
+                new_fields.push(FieldDef {
+                    name: child_field_name(&tag, idx),
+                    ty: Some(TypeAnnotation::Custom(tag)),
+                    default_val: None,
+                    span,
+                });
+            }
+
+            if n_effects > 0 || has_lifecycle {
+                new_fields.push(FieldDef {
+                    name: BR_MOUNTED_FIELD.to_string(),
+                    ty: Some(TypeAnnotation::Bool),
+                    default_val: None,
+                    span: (1, 1),
+                });
+            }
+            for i in 0..n_effects {
+                new_fields.push(FieldDef {
+                    name: fx_sig_field_name(i),
+                    ty: Some(TypeAnnotation::Str),
+                    default_val: None,
+                    span: (1, 1),
+                });
+            }
+
+            if new_fields.is_empty() {
+                continue;
+            }
+
+            for item in &mut program.items {
+                if let Item::Type(t) = item {
+                    if t.name == view_type {
+                        for f in &new_fields {
+                            if !t.fields.iter().any(|e| e.name == f.name) {
+                                t.fields.push(f.clone());
+                            }
+                        }
+                    }
+                }
+            }
+            if let Some(mut t) = self.structs.get(&view_type).cloned() {
+                for f in &new_fields {
+                    if !t.fields.iter().any(|e| e.name == f.name) {
+                        t.fields.push(f.clone());
+                    }
+                }
+                self.structs.insert(view_type.clone(), t);
+            }
+        }
+    }
+
+    fn collect_component_uses(elem: &JsxElement, out: &mut Vec<(String, (usize, usize))>) {
+        // A component use is any non-builtin tag; validity (struct+view) is
+        // decided by the caller so traversal stays complete.
+        if !is_builtin_brui_tag(&elem.tag) {
+            out.push((elem.tag.clone(), elem.span));
+        }
+        for child in &elem.children {
+            Self::collect_component_uses_in_child(child, out);
+        }
+    }
+
+    fn collect_component_uses_in_child(child: &JsxChild, out: &mut Vec<(String, (usize, usize))>) {
+        match child {
+            JsxChild::Element(e) => Self::collect_component_uses(e, out),
+            JsxChild::If { then_child, else_child, .. } => {
+                Self::collect_component_uses_in_child(then_child, out);
+                if let Some(ec) = else_child {
+                    Self::collect_component_uses_in_child(ec, out);
+                }
+            }
+            JsxChild::For { body, .. } => {
+                Self::collect_component_uses_in_child(body, out);
+            }
+            _ => {}
+        }
+    }
+
+    fn count_effects(elem: &JsxElement, n: &mut usize) {
+        for child in &elem.children {
+            Self::count_effects_in_child(child, n);
+        }
+    }
+
+    fn count_effects_in_child(child: &JsxChild, n: &mut usize) {
+        match child {
+            JsxChild::Effect { .. } => {
+                *n += 1;
+            }
+            JsxChild::Element(e) => Self::count_effects(e, n),
+            JsxChild::If { then_child, else_child, .. } => {
+                Self::count_effects_in_child(then_child, n);
+                if let Some(ec) = else_child {
+                    Self::count_effects_in_child(ec, n);
+                }
+            }
+            JsxChild::For { body, .. } => {
+                Self::count_effects_in_child(body, n);
+            }
+            _ => {}
+        }
     }
 
     fn analyze_method(
@@ -354,20 +527,43 @@ impl Analyzer {
                 }
             }
             Expr::MethodCall { receiver, args, method, .. } => {
-                // If receiver is a field, mutating methods like .push() mutate the field
-                if let Expr::Ident(name, _) = receiver.as_ref() {
-                    if field_names.contains(name) && !local_vars.contains(name) {
-                        if is_mutating_method(method) {
-                            *field_mutated = true;
-                        }
+                // React sugar: `ChildType.method()` calls the method on this
+                // view's embedded `<ChildType/>` instance.
+                Self::resolve_component_ref(
+                    receiver,
+                    field_names,
+                    local_vars,
+                    field_accessed,
+                );
+                // If receiver is a field, mutating methods like .push() mutate the field.
+                // (SelfAccess receivers are always fields by construction.)
+                let receiver_is_field = match receiver.as_ref() {
+                    Expr::Ident(name, _) => {
+                        field_names.contains(name) && !local_vars.contains(name)
                     }
+                    Expr::SelfAccess(name, _) => field_names.contains(name),
+                    _ => false,
+                };
+                if receiver_is_field && is_mutating_method(method) {
+                    *field_mutated = true;
                 }
                 self.resolve_fields_in_expr(receiver, field_names, method_names, local_vars, field_accessed, field_mutated);
                 for a in args {
                     self.resolve_fields_in_expr(a, field_names, method_names, local_vars, field_accessed, field_mutated);
                 }
             }
-            Expr::MemberAccess { object, .. } | Expr::SafeNav { object, .. } => {
+            Expr::MemberAccess { object, .. } => {
+                // React sugar: `ChildType.field` reads this view's embedded
+                // `<ChildType/>` instance.
+                Self::resolve_component_ref(
+                    object,
+                    field_names,
+                    local_vars,
+                    field_accessed,
+                );
+                self.resolve_fields_in_expr(object, field_names, method_names, local_vars, field_accessed, field_mutated);
+            }
+            Expr::SafeNav { object, .. } => {
                 self.resolve_fields_in_expr(object, field_names, method_names, local_vars, field_accessed, field_mutated);
             }
             Expr::Index { collection, index, .. } => {
@@ -456,6 +652,12 @@ impl Analyzer {
                 let mut inner_locals = local_vars.clone();
                 inner_locals.insert(item.clone());
                 self.resolve_fields_in_jsx_child(body, field_names, &inner_locals);
+            }
+            JsxChild::Effect { deps, body, .. } => {
+                for d in deps.iter_mut() {
+                    self.resolve_fields_in_expr(d, field_names, &empty_methods, local_vars, &mut dummy_acc, &mut dummy_mut);
+                }
+                self.resolve_fields_in_expr(body, field_names, &empty_methods, local_vars, &mut dummy_acc, &mut dummy_mut);
             }
             _ => {}
         }
@@ -947,6 +1149,27 @@ impl Analyzer {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// React sugar for parent views: a bare `ChildType` in receiver position
+    /// refers to the embedded `<ChildType/>` instance (`__child_<Tag>_0`)
+    /// declared by the component tag in this view. Unknown names are left
+    /// untouched so typos still surface as undeclared-identifier errors.
+    fn resolve_component_ref(
+        target: &mut Box<Expr>,
+        field_names: &HashSet<String>,
+        local_vars: &HashSet<String>,
+        field_accessed: &mut bool,
+    ) {
+        if let Expr::Ident(name, span) = target.as_ref() {
+            if !field_names.contains(name) && !local_vars.contains(name) {
+                let inst = child_field_name(name, 0);
+                if field_names.contains(&inst) {
+                    *field_accessed = true;
+                    **target = Expr::SelfAccess(inst, *span);
+                }
+            }
         }
     }
 

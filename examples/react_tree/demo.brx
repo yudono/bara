@@ -1,0 +1,28 @@
+use ReactDemoApp
+
+view ReactDemoApp =>
+    <Panel class="screen">
+        <Col class="main">
+            <Text class="title">{title}</Text>
+            <Text class="auth_hint">frames {frames} - clicks {clicks}</Text>
+            {if started =>
+                <Text class="status_ok">app mounted - live rerendering</Text>
+            }
+            <Row class="row">
+                <Button class="btn_primary" onClick={poke()}>
+                    Poke parent
+                </Button>
+            </Row>
+            {useEffect(clicks) => record_click()}
+            <Clicker label="Team A" step="1" />
+            <Clicker label="Team B" step="2" />
+            <Text class="section_title">Event log</Text>
+            <Scroll class="log_scroll">
+                <Col class="log_list">
+                    {for entry in log =>
+                        <Text class="log_action">{entry}</Text>
+                    }
+                </Col>
+            </Scroll>
+        </Col>
+    </Panel>

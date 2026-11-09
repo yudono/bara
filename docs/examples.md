@@ -6,10 +6,10 @@ All examples build offline and run to exit code 0. GUI examples render with
 ```
 examples/
   todo_app/          # Todo list: types + methods (.br) + native GUI (.brx)
-  dashboard_gui/     # Multi-page cloud dashboard sharing one styles.css
+  dashboard_gui/     # Sidebar cloud dashboard: dashboard.brx shell + pages/** components
     pages/
-      auth/          # login, register (.br + .brx each)
-      dashboard/     # overview, users (.br + .brx each)
+      auth/          # login, register (.br + .brx each, auth session state)
+      dashboard/     # overview (metrics/logs/search), users (node CRUD) (.br + .brx each)
   brui_xml_gui/      # XML layout + shared CSS variant (layout.xml + styles.css)
   cli_algorithms/    # Fibonacci, primes, sorting, binary search, GCD
   backend_api/       # HttpRequest/Response + ApiServer dispatch demo
@@ -22,8 +22,9 @@ examples/
 | Example | Entry | UI definition | Notes |
 |---|---|---|---|
 | `todo_app` | `main.br` | `todo.brx` + inline `<style>` | `TodoApp`: `tambah_tugas`, `hapus_tugas`, `hitung_aktif`; `eframe::App` impl |
-| `dashboard_gui` | `main.br` | `shell.brx` + `pages/**` + shared `styles.css` | `DashboardApp` shell with tab navigation; `LoginForm`, `RegisterForm`, `OverviewPage`, `UsersPage` sub-views; no per-`.brx` `<style>` needed |
+| `dashboard_gui` | `main.br` | `dashboard.brx` sidebar shell + `pages/**` child components + shared `styles.css` | `DashboardApp` boots first (matches `brui.load("dashboard.brx")`); sidebar after login, auth-gated pages; login/register with session, node CRUD (add/edit/remove/filter), KPI + log search |
 | `brui_xml_gui` | `main.br` | `layout.xml` + shared `styles.css` | `XmlDemoApp` (`increment`, `reset`, `login`); XML `bind="..."` / `onClick="..."` string form |
+| `react_tree` | `main.br` | `demo.brx` + `counter.brx` + shared `styles.css` | `ReactDemoApp` parent + `Clicker` children; props, `useEffect`, `onMount`/`onUpdate`/`onUnmount`, persisted child state |
 
 Window sizes: todo `450x600`, dashboard `850x620`, brui XML demo `500x400`
 (set via `app.run("Title", width = ..., height = ...)` in each `main.br`).

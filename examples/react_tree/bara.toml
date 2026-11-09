@@ -1,0 +1,9 @@
+[package]
+name = "react_tree"
+version = "0.1.0"
+entry = "main.br"
+
+[presets]
+gui = true
+
+[dependencies]

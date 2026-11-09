@@ -5,19 +5,66 @@ view UsersPage =>
         <Col class="card">
             <Text class="card_title">{title}</Text>
             <Text class="card_subtitle">Every node in the fleet at a glance</Text>
-            <Row class="filter_box">
-                <Input class="input_field" bind={filter} placeholder="Filter nodes..." />
+            <Col class="form_box">
+                <Input class="input_field" bind={node_name} placeholder="Node name (e.g. web-03)" />
+                <Row class="form_row">
+                    <Button class={node_status == "healthy" ? "tab_item tab_active" : "tab_item"} onClick={node_status = "healthy"}>
+                        Healthy
+                    </Button>
+                    <Button class={node_status == "degraded" ? "tab_item tab_active" : "tab_item"} onClick={node_status = "degraded"}>
+                        Degraded
+                    </Button>
+                    <Button class={node_status == "down" ? "tab_item tab_active" : "tab_item"} onClick={node_status = "down"}>
+                        Down
+                    </Button>
+                </Row>
+                {if editing_id == 0 =>
+                    <Button class="btn_primary" onClick={add_or_save()}>
+                        Add Node
+                    </Button>
+                else =>
+                    <Row class="form_row">
+                        <Button class="btn_primary" onClick={add_or_save()}>
+                            Save Changes
+                        </Button>
+                        <Button class="btn_secondary" onClick={cancel_edit()}>
+                            Cancel
+                        </Button>
+                    </Row>
+                }
+                {if node_error != "" =>
+                    <Text class="status_err">{node_error}</Text>
+                }
+            </Col>
+            <Row class="form_row">
+                <Button class={filter == "" ? "tab_item tab_active" : "tab_item"} onClick={filter = ""}>
+                    All
+                </Button>
+                <Button class={filter == "healthy" ? "tab_item tab_active" : "tab_item"} onClick={filter = "healthy"}>
+                    Healthy
+                </Button>
+                <Button class={filter == "degraded" ? "tab_item tab_active" : "tab_item"} onClick={filter = "degraded"}>
+                    Degraded
+                </Button>
+                <Button class={filter == "down" ? "tab_item tab_active" : "tab_item"} onClick={filter = "down"}>
+                    Down
+                </Button>
             </Row>
             <Scroll class="log_scroll">
                 <Col class="log_list">
                     {for u in users =>
-                        <Row class="user_row">
-                            <Text class="user_name">{u.name}</Text>
-                            <Text class="log_status">{u.status}</Text>
-                            <Button class="btn_danger" onClick={remove_user(u.id)}>
-                                Remove
-                            </Button>
-                        </Row>
+                        {if filter == "" or u.status == filter =>
+                            <Row class="user_row">
+                                <Text class="user_name">{u.name}</Text>
+                                <Text class="log_status">{u.status}</Text>
+                                <Button class="btn_secondary" onClick={edit_user(u.id)}>
+                                    Edit
+                                </Button>
+                                <Button class="btn_danger" onClick={remove_user(u.id)}>
+                                    Remove
+                                </Button>
+                            </Row>
+                        }
                     }
                 </Col>
             </Scroll>

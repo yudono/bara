@@ -11,3 +11,9 @@ type LoginForm =
         else =>
             logged_in = true
             error_msg = ""
+
+    logout() =>
+        logged_in = false
+        username = ""
+        password = ""
+        error_msg = ""
