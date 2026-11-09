@@ -15,16 +15,19 @@ fn deps_gui_preset_adds_egui_eframe() {
     let (bridge, mut cfg) = bridge_at("gui");
     cfg.presets.insert("gui".to_string());
     let toml = bridge.generate_cargo_toml(&cfg, "fn main() {}");
-    assert!(toml.contains("eframe = \"0.27\""), "{toml}");
+    // accesskit is OFF (upstream macOS abort); everything else mirrors default.
+    assert!(toml.contains("eframe = { version = \"0.27\""), "{toml}");
     assert!(toml.contains("egui = \"0.27\""), "{toml}");
+    assert!(!toml.contains("accesskit"), "{toml}");
 }
 
 #[test]
 fn deps_autodetect_egui_in_rust_code() {
     let (bridge, cfg) = bridge_at("auto");
     let toml = bridge.generate_cargo_toml(&cfg, "fn update() { ui.label(egui::RichText::new(\"x\")); }");
-    assert!(toml.contains("eframe = \"0.27\""), "{toml}");
+    assert!(toml.contains("eframe = { version = \"0.27\""), "{toml}");
     assert!(toml.contains("egui = \"0.27\""), "{toml}");
+    assert!(!toml.contains("accesskit"), "{toml}");
 }
 
 #[test]

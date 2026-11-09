@@ -3,6 +3,24 @@
 All notable changes to the Bara compiler & CLI are documented here.
 Versioning follows SemVer (`bara version` reads `Cargo.toml`).
 
+## [0.1.2] - 2026-11-09
+
+### Fixed (macOS GUI abort)
+- Root cause found: the `countByEnumeratingWithState` abort comes from objc2's
+  `msg_send_check`, which is `#[cfg(debug_assertions)]` — a debug-only
+  verification that false-positives on Swift-overlay NSScreen arrays. It cannot
+  fire in release builds.
+- Generated GUI projects now set `[profile.dev] debug-assertions = false`
+  (overflow checks stay on), so plain `bara run` opens a window instead of
+  aborting. Verified: the abort string is absent from generated binaries
+  (`strings ... | grep "invalid message send"` → 0), and all three GUI examples
+  stay alive with real windows.
+- Removed eframe's `accesskit` default feature from the generated manifest
+  (it dragged in `accesskit_macos -> objc2 0.3-beta`, gone from the lock now).
+  Opt back in via `bara.toml`: `eframe = { version = "0.27", features = [...] }`.
+
+## [0.1.1] - 2026-11-09
+
 ## [0.1.1] - 2026-11-09
 
 ### Fixed

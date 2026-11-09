@@ -625,13 +625,21 @@ impl CargoBridge {
         let mut deps = config.dependencies.clone();
 
         // Auto-detect GUI presets (egui, eframe)
+        // NOTE: eframe's `accesskit` feature is deliberately OFF. It pulls
+        // accesskit_macos -> objc2 0.3-beta, whose fast-enumeration encoding
+        // (`countByEnumeratingWithState` expecting 'q') aborts at launch on
+        // newer macOS against Swift-backed NSScreen arrays (expected 'Q').
+        // Everything else mirrors eframe's default features. Users who need
+        // screen-reader support can opt back in via bara.toml:
+        //   eframe = { version = "0.27", features = ["accesskit", ...] }
         if config.presets.contains("gui")
             || rust_code.contains("eframe::App")
             || rust_code.contains("egui::")
             || rust_code.contains("brui")
         {
-            deps.entry("eframe".to_string())
-                .or_insert_with(|| "\"0.27\"".to_string());
+            deps.entry("eframe".to_string()).or_insert_with(|| {
+                "{ version = \"0.27\", default-features = false, features = [\"default_fonts\", \"glow\", \"wayland\", \"web_screen_reader\", \"x11\"] }".to_string()
+            });
             deps.entry("egui".to_string())
                 .or_insert_with(|| "\"0.27\"".to_string());
         }
@@ -661,6 +669,22 @@ impl CargoBridge {
             } else {
                 out.push_str(&format!("{k} = \"{v}\"\n"));
             }
+        }
+
+        // GUI on macOS: objc2's message-send verification is `#[cfg(debug_assertions)]`
+        // and false-positives on Swift-overlay classes (NSScreen array reports 'Q'
+        // where the declared NSUInteger maps to 'q' in its table), aborting the app
+        // during winit launch in DEV builds. Release builds skip the check and run
+        // fine (the ABI itself is correct). Disable debug-assertions for generated
+        // GUI projects so plain `bara run` opens a window instead of aborting.
+        // Overflow checks stay on (separate profile flag). CLI projects are untouched.
+        let is_gui = config.presets.contains("gui")
+            || rust_code.contains("eframe::App")
+            || rust_code.contains("egui::")
+            || rust_code.contains("brui");
+        if is_gui {
+            out.push_str("\n[profile.dev]\ndebug-assertions = false\n");
+            out.push_str("[profile.release]\ndebug-assertions = false\n");
         }
 
         out

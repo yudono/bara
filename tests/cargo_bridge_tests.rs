@@ -82,8 +82,10 @@ fn test_cargo_bridge_cache_generation() {
 
     // GUI detection still works when Rust code uses eframe.
     let gui_toml = bridge.generate_cargo_toml(&config, "impl eframe::App for Foo {}");
-    assert!(gui_toml.contains("eframe = \"0.27\""));
+    assert!(gui_toml.contains("eframe = { version = \"0.27\""));
     assert!(gui_toml.contains("egui = \"0.27\""));
+    // No accesskit: its macOS screen-enumeration path aborts the app at launch.
+    assert!(!gui_toml.contains("accesskit"));
 }
 
 #[test]

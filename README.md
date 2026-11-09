@@ -271,6 +271,13 @@ docs/                  # brui_components.md, brui_styling.md, examples.md, testi
 Every example ships a `bara.toml` with `[package]` + `[presets]` + `[dependencies]`
 tables; `[presets]` selects toolchain behavior (`gui` pulls `eframe`/`egui`).
 
+Generated GUI projects disable eframe's `accesskit` feature (its screen-reader
+stack aborted at launch on newer macOS) and set `debug-assertions = false` for
+the same reason (objc2's message verification is debug-only and false-positives
+on Swift-overlay NSScreen arrays). Re-enable accessibility explicitly in
+`bara.toml` if you need it:
+`eframe = { version = "0.27", features = ["accesskit", ...] }`.
+
 ### Shared `styles.css` concept (explicit import)
 
 A `.css` file is only compiled in when some `.br`/`.brx` file explicitly
