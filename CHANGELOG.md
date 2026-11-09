@@ -3,6 +3,21 @@
 All notable changes to the Bara compiler & CLI are documented here.
 Versioning follows SemVer (`bara version` reads `Cargo.toml`).
 
+## [0.1.4] - 2026-11-09
+
+### Changed / Added
+- Injected child instances are now snake_case (`__child_login_form_0`);
+  user code always writes the `ChildType.field` / `ChildType.method()`
+  sugar — never `__child_*` — and typos still error as undeclared
+  identifiers.
+- Boot view follows `brui.load("*.brx")` in the entry program.
+- `onUpdate` auto-repaint: a viewed type defining `onUpdate` gets
+  `request_repaint_after(250ms)` for per-frame logic; types without it stay
+  event-driven.
+- New example `examples/solanum_rewrite/` (pomodoro timer rewrite:
+  Timer/Settings/About components, `LapType` enum + `match`, frame-based
+  ticking via `onUpdate`, explicit `styles.css`).
+
 ## [0.1.3] - 2026-11-09
 
 ### Added (React-style UI model)

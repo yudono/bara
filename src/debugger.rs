@@ -170,7 +170,7 @@ impl BaraDebugger {
                     self.check_type_def(t);
                 }
                 Item::Fn(f) => {
-                    self.check_function(f, &HashSet::new());
+                    self.check_function(f, &HashSet::new(), &HashSet::new());
                 }
                 Item::View(v) => {
                     self.check_view_def(v);
@@ -233,14 +233,19 @@ impl BaraDebugger {
                     .with_suggestion("Ensure method names in a type are unique"),
                 );
             }
-            self.check_function(m, &field_names);
+            self.check_function(m, &field_names, &method_names);
         }
     }
 
-    fn check_function(&mut self, f: &FnDef, struct_fields: &HashSet<String>) {
+    fn check_function(&mut self, f: &FnDef, struct_fields: &HashSet<String>, methods: &HashSet<String>) {
         let mut scope = self.known_globals.clone();
         for p in &f.params {
             scope.insert(p.name.clone());
+        }
+        // Sibling methods are callable without qualification (resolved to
+        // self.method() by the analyzer).
+        for m in methods {
+            scope.insert(m.clone());
         }
 
         self.check_block(&f.body, &mut scope, struct_fields);

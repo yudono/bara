@@ -191,9 +191,9 @@ view App =>
 fn react_codegen_renders_child_with_state_and_effects() {
     let rust = transpile_ok(PARENT_CHILD_SRC);
     // Persisted child instance + props on the parent.
-    assert!(rust.contains("__child_Card_0"), "{rust}");
+    assert!(rust.contains("__child_card_0"), "{rust}");
     assert!(
-        rust.contains("self.__child_Card_0.label = \"Hello\".to_string();"),
+        rust.contains("self.__child_card_0.label = \"Hello\".to_string();"),
         "{rust}"
     );
     assert!(rust.contains("__render_as_child"), "{rust}");
@@ -212,7 +212,7 @@ fn react_codegen_renders_child_with_state_and_effects() {
 #[test]
 fn react_child_type_dot_syntax_resolves_to_instance() {
     // User-facing sugar: `Card.count` inside the parent means
-    // `self.__child_Card_0.count` — no `__child_` identifiers in user code.
+    // `self.__child_card_0.count` — no `__child_` identifiers in user code.
     let src = r#"
 type Card =
     label: str = "x"
@@ -242,7 +242,7 @@ view App =>
 "#;
     let rust = transpile_ok(src);
     assert!(
-        rust.contains("self.__child_Card_0.count"),
+        rust.contains("self.__child_card_0.count"),
         "sugar must lower to instance access:\n{rust}"
     );
     assert!(
@@ -262,6 +262,6 @@ fn react_example_transpiles_and_boots_parent() {    let dir = PathBuf::from(env!
     let rust = bridge.transpile_sources(&sources).expect("transpile");
     syn::parse_file(&rust).expect("syn");
     assert!(rust.contains("Box::new(ReactDemoApp::default())"), "{rust}");
-    assert!(rust.contains("__child_Clicker_0"), "{rust}");
-    assert!(rust.contains("__child_Clicker_1"), "{rust}");
+    assert!(rust.contains("__child_clicker_0"), "{rust}");
+    assert!(rust.contains("__child_clicker_1"), "{rust}");
 }

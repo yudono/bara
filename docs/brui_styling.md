@@ -19,8 +19,8 @@ one sheet with no per-file `<style>` needed, but never by accident:
 
 ```
 dashboard_gui/
-  styles.css        # shared by shell.brx + all pages
-  shell.brx         # no <style> block
+  styles.css        # shared by dashboard.brx + all pages
+  dashboard.brx      # no <style> block
   pages/auth/login.brx
   pages/dashboard/users.brx
 ```

@@ -70,7 +70,8 @@ validator but currently render through the generic vertical-container fallback.
 
 A view whose tag names a `type` **with its own `view`** is a child component.
 The parent embeds it with `<Tag .../>`; the compiler injects a persisted
-instance (`self.__child_<Tag>_<n>`) so child state survives re-renders:
+instance (`self.__child_<tag_snake>_<n>`, e.g. `__child_login_form_0`) so
+child state survives re-renders:
 
 ```jsx
 view DashboardApp =>
@@ -101,7 +102,9 @@ view DashboardApp =>
 - **Lifecycle**: `onMount()` runs once after the first render, `onUpdate()`
   runs at the end of later frames, `onUnmount()` runs via generated
   `impl Drop`. They work for the running app view and for embedded children
-  (`__render_as_child`).
+  (`__render_as_child`). Define `onUpdate()` for per-frame logic (timers,
+  clocks); Bara then calls `request_repaint_after(250ms)` so the view keeps
+  ticking — types without `onUpdate` stay event-driven.
 - **Parent-child tree**: parents compose `<OverviewPage/>`, `<UsersPage/>`,
   `<LoginForm/>`, `<RegisterForm/>` and switch them conditionally; each child
   keeps its own state (see `examples/dashboard_gui/` — sidebar shell with

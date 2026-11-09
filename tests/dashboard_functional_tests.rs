@@ -52,10 +52,10 @@ fn dashboard_node_crud_methods_exist() {
 fn dashboard_pages_are_child_components() {
     let rust = dashboard_rust();
     for tag in [
-        "__child_LoginForm_0",
-        "__child_RegisterForm_0",
-        "__child_OverviewPage_0",
-        "__child_UsersPage_0",
+        "__child_login_form_0",
+        "__child_register_form_0",
+        "__child_overview_page_0",
+        "__child_users_page_0",
     ] {
         assert!(rust.contains(tag), "missing persisted child {tag}:\n{rust}");
     }

@@ -371,21 +371,34 @@ impl CssStyleSheet {
             frame_calls.push(format!("rounding(egui::Rounding::same({:.1}))", r));
         }
 
-        // Border / stroke (border, or border-width + border-color)
+        // Border / stroke (border, or border-width + border-color).
+        // Stroke color is opacity-modulated, like fill, for consistency.
         if let Some(border) = props.get("border") {
-            if let Some(s) = Stroke::parse(border) {
+            if let Some(mut s) = Stroke::parse(border) {
+                if opacity < 1.0 {
+                    let a = ((s.color.a as f32 * opacity).clamp(0.0, 255.0)) as u8;
+                    s.color.a = a;
+                }
                 frame_calls.push(format!("stroke({})", s.to_egui_code()));
             }
         } else if let Some(width_str) = props.get("border-width") {
             let w = Self::parse_size(width_str).unwrap_or(1.0);
-            let color = if let Some(c_str) = props.get("border-color") {
+            let mut color = if let Some(c_str) = props.get("border-color") {
                 Color::parse(c_str).unwrap_or(Color::rgb(0, 0, 0))
             } else {
                 Color::rgb(0, 0, 0)
             };
+            if opacity < 1.0 {
+                let a = ((color.a as f32 * opacity).clamp(0.0, 255.0)) as u8;
+                color = Color::new(color.r, color.g, color.b, a);
+            }
             frame_calls.push(format!("stroke(egui::Stroke::new({:.1}_f32, {}))", w, color.to_egui_code()));
         } else if let Some(color_str) = props.get("border-color") {
-            if let Some(c) = Color::parse(color_str) {
+            if let Some(mut c) = Color::parse(color_str) {
+                if opacity < 1.0 {
+                    let a = ((c.a as f32 * opacity).clamp(0.0, 255.0)) as u8;
+                    c = Color::new(c.r, c.g, c.b, a);
+                }
                 frame_calls.push(format!("stroke(egui::Stroke::new(1.0_f32, {}))", c.to_egui_code()));
             }
         }
@@ -403,6 +416,91 @@ impl CssStyleSheet {
             let chain = frame_calls.join(".");
             Some(format!("egui::Frame::none().{chain}"))
         }
+    }
+
+    /// `fill(...)` fragment for `background` / `background-color` (opacity-modulated).
+    pub fn get_fill_code(&self, classes: &[&str]) -> Option<String> {
+        let props = self.resolve_properties(classes);
+        let opacity = Self::parse_opacity(props.get("opacity").map(|s| s.as_str()).unwrap_or("1"));
+        let bg = props
+            .get("background")
+            .or_else(|| props.get("background-color"))?;
+        let mut c = Color::parse(bg)?;
+        if opacity < 1.0 {
+            let a = ((c.a as f32 * opacity).clamp(0.0, 255.0)) as u8;
+            c = Color::new(c.r, c.g, c.b, a);
+        }
+        Some(format!("fill({})", c.to_egui_code()))
+    }
+
+    /// `stroke(...)` fragment for `border` / `border-width` + `border-color`.
+    /// Stroke color is opacity-modulated, like fill, for consistency.
+    pub fn get_stroke_code(&self, classes: &[&str]) -> Option<String> {
+        let props = self.resolve_properties(classes);
+        let opacity = Self::parse_opacity(props.get("opacity").map(|s| s.as_str()).unwrap_or("1"));
+        if let Some(border) = props.get("border") {
+            let mut s = Stroke::parse(border)?;
+            if opacity < 1.0 {
+                let a = ((s.color.a as f32 * opacity).clamp(0.0, 255.0)) as u8;
+                s.color.a = a;
+            }
+            return Some(format!("stroke({})", s.to_egui_code()));
+        }
+        if let Some(width_str) = props.get("border-width") {
+            let w = Self::parse_size(width_str).unwrap_or(1.0);
+            let mut color = props
+                .get("border-color")
+                .and_then(|s| Color::parse(s.as_str()))
+                .unwrap_or(Color::rgb(0, 0, 0));
+            if opacity < 1.0 {
+                let a = ((color.a as f32 * opacity).clamp(0.0, 255.0)) as u8;
+                color = Color::new(color.r, color.g, color.b, a);
+            }
+            return Some(format!(
+                "stroke(egui::Stroke::new({:.1}_f32, {}))",
+                w,
+                color.to_egui_code()
+            ));
+        }
+        if let Some(color_str) = props.get("border-color") {
+            if let Some(mut c) = Color::parse(color_str) {
+                if opacity < 1.0 {
+                    let a = ((c.a as f32 * opacity).clamp(0.0, 255.0)) as u8;
+                    c = Color::new(c.r, c.g, c.b, a);
+                }
+                return Some(format!(
+                    "stroke(egui::Stroke::new(1.0_f32, {}))",
+                    c.to_egui_code()
+                ));
+            }
+        }
+        None
+    }
+
+    /// `rounding(...)` fragment for `border-radius`.
+    pub fn get_rounding_code(&self, classes: &[&str]) -> Option<String> {
+        let props = self.resolve_properties(classes);
+        let br = props.get("border-radius")?;
+        let r = Self::parse_size(br).unwrap_or(0.0);
+        Some(format!("rounding(egui::Rounding::same({:.1}))", r))
+    }
+
+    /// Numeric `font-size` in px (units rem/em/px supported).
+    pub fn get_font_size(&self, classes: &[&str]) -> Option<f32> {
+        let props = self.resolve_properties(classes);
+        props.get("font-size").and_then(|fs| Self::parse_size(fs))
+    }
+
+    /// Text `color` as an `egui::Color32` expression (opacity-modulated).
+    pub fn get_text_color_code(&self, classes: &[&str]) -> Option<String> {
+        let props = self.resolve_properties(classes);
+        let opacity = Self::parse_opacity(props.get("opacity").map(|s| s.as_str()).unwrap_or("1"));
+        let mut c = Color::parse(props.get("color")?)?;
+        if opacity < 1.0 {
+            let a = ((c.a as f32 * opacity).clamp(0.0, 255.0)) as u8;
+            c = Color::new(c.r, c.g, c.b, a);
+        }
+        Some(c.to_egui_code())
     }
 
     /// Generates code for egui::RichText modifiers

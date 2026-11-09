@@ -476,7 +476,27 @@ pub fn is_builtin_brui_tag(tag: &str) -> bool {
 
 /// Hidden field holding a persisted child component instance.
 pub fn child_field_name(tag: &str, idx: usize) -> String {
-    format!("{CHILD_FIELD_PREFIX}{tag}_{idx}")
+    format!("{CHILD_FIELD_PREFIX}{}_{idx}", to_snake_case(tag))
+}
+
+/// `CamelCase` → `snake_case` for generated identifiers
+/// (`LoginForm` → `login_form`, `Web2FA` → `web2_fa`).
+pub fn to_snake_case(name: &str) -> String {
+    let mut out = String::new();
+    let mut prev_lower_or_digit = false;
+    for c in name.chars() {
+        if c.is_ascii_uppercase() {
+            if prev_lower_or_digit {
+                out.push('_');
+            }
+            out.push(c.to_ascii_lowercase());
+            prev_lower_or_digit = false;
+        } else {
+            out.push(c);
+            prev_lower_or_digit = c.is_ascii_lowercase() || c.is_ascii_digit();
+        }
+    }
+    out
 }
 
 /// Hidden field holding the debug signature of an effect's dependency list.

@@ -550,7 +550,13 @@ impl<'a> Codegen<'a> {
         self.pending_effects.clear();
         self.in_child = false;
         self.emit_jsx_element(&view.root, css, "ctx", "ui");
-        self.emit_react_epilogue(&view.type_name, has_mount, has_update, needs_mounted);
+        self.emit_react_epilogue(
+            &view.type_name,
+            has_mount,
+            has_update,
+            needs_mounted,
+            Some("ctx"),
+        );
 
         self.indent_level -= 1;
         self.writeln("}");
@@ -570,7 +576,13 @@ impl<'a> Codegen<'a> {
         let prev_child = self.in_child;
         self.in_child = true;
         self.emit_jsx_element(&view.root, css, "ctx", "ui");
-        self.emit_react_epilogue(&view.type_name, has_mount, has_update, needs_mounted);
+        self.emit_react_epilogue(
+            &view.type_name,
+            has_mount,
+            has_update,
+            needs_mounted,
+            Some("ui.ctx()"),
+        );
         self.in_child = prev_child;
         self.indent_level -= 1;
         self.writeln("}");
@@ -603,6 +615,7 @@ impl<'a> Codegen<'a> {
         has_mount: bool,
         has_update: bool,
         needs_mounted: bool,
+        repaint: Option<&str>,
     ) {
         let _ = type_name;
         let effects = std::mem::take(&mut self.pending_effects);
@@ -618,6 +631,13 @@ impl<'a> Codegen<'a> {
         }
         if needs_mounted {
             self.writeln("self.__br_mounted = true;");
+        }
+        if has_update {
+            if let Some(expr) = repaint {
+                self.writeln(&format!(
+                    "{expr}.request_repaint_after(std::time::Duration::from_millis(250));"
+                ));
+            }
         }
     }
 
@@ -815,15 +835,21 @@ impl<'a> Codegen<'a> {
                 };
                 let max_w = css.get_max_width(&class_refs);
                 let max_h = css.get_max_height(&class_refs);
+                let width = css.get_width(&class_refs);
+                let height = css.get_height(&class_refs);
                 let opacity = css.get_opacity(&class_refs);
                 self.writeln(&format!(
                     "egui::CentralPanel::default(){frame_str}.show({ctx_var}, |{ui_var}| {{"
                 ));
                 self.indent_level += 1;
-                if let Some(w) = max_w {
+                if let Some(w) = width {
+                    self.writeln(&format!("{ui_var}.set_width({:.1});", w));
+                } else if let Some(w) = max_w {
                     self.writeln(&format!("{ui_var}.set_max_width({:.1});", w));
                 }
-                if let Some(h) = max_h {
+                if let Some(h) = height {
+                    self.writeln(&format!("{ui_var}.set_height({:.1});", h));
+                } else if let Some(h) = max_h {
                     self.writeln(&format!("{ui_var}.set_max_height({:.1});", h));
                 }
                 if let Some(o) = opacity {
@@ -831,8 +857,16 @@ impl<'a> Codegen<'a> {
                         self.writeln(&format!("{ui_var}.set_opacity({:.3});", o));
                     }
                 }
+                if Self::align_cross_kind(css, &class_refs) == "Center" {
+                    self.writeln(&format!("{ui_var}.vertical_centered(|{ui_var}| {{"));
+                    self.indent_level += 1;
+                }
                 for child in &elem.children {
                     self.emit_jsx_child(child, css, ui_var);
+                }
+                if Self::align_cross_kind(css, &class_refs) == "Center" {
+                    self.indent_level -= 1;
+                    self.writeln("});");
                 }
                 self.indent_level -= 1;
                 self.writeln("});");
@@ -842,20 +876,31 @@ impl<'a> Codegen<'a> {
                 let gap_opt = css.get_spacing(&class_refs);
                 let max_w = css.get_max_width(&class_refs);
                 let max_h = css.get_max_height(&class_refs);
+                let width = css.get_width(&class_refs);
+                let height = css.get_height(&class_refs);
                 let opacity = css.get_opacity(&class_refs);
                 if let Some(fc) = &frame_opt {
                     self.writeln(&format!("{fc}.show({ui_var}, |{ui_var}| {{"));
                     self.indent_level += 1;
                 }
-                self.writeln(&format!("{ui_var}.vertical(|{ui_var}| {{"));
+                // align-items:center -> vertically centered children; default is top-down.
+                if Self::align_cross_kind(css, &class_refs) == "Center" {
+                    self.writeln(&format!("{ui_var}.vertical_centered(|{ui_var}| {{"));
+                } else {
+                    self.writeln(&format!("{ui_var}.vertical(|{ui_var}| {{"));
+                }
                 self.indent_level += 1;
                 if let Some(gap) = gap_opt {
                     self.writeln(&format!("{ui_var}.spacing_mut().item_spacing.y = {:.1};", gap));
                 }
-                if let Some(w) = max_w {
+                if let Some(w) = width {
+                    self.writeln(&format!("{ui_var}.set_width({:.1});", w));
+                } else if let Some(w) = max_w {
                     self.writeln(&format!("{ui_var}.set_max_width({:.1});", w));
                 }
-                if let Some(h) = max_h {
+                if let Some(h) = height {
+                    self.writeln(&format!("{ui_var}.set_height({:.1});", h));
+                } else if let Some(h) = max_h {
                     self.writeln(&format!("{ui_var}.set_max_height({:.1});", h));
                 }
                 if let Some(o) = opacity {
@@ -878,20 +923,39 @@ impl<'a> Codegen<'a> {
                 let gap_opt = css.get_spacing(&class_refs);
                 let max_w = css.get_max_width(&class_refs);
                 let max_h = css.get_max_height(&class_refs);
+                let width = css.get_width(&class_refs);
+                let height = css.get_height(&class_refs);
                 let opacity = css.get_opacity(&class_refs);
                 if let Some(fc) = &frame_opt {
                     self.writeln(&format!("{fc}.show({ui_var}, |{ui_var}| {{"));
                     self.indent_level += 1;
                 }
-                self.writeln(&format!("{ui_var}.horizontal(|{ui_var}| {{"));
+                // align-items controls the cross axis (horizontal_top /
+                // horizontal_centered); justify-content:space-between spreads
+                // children across the full row width via main_justify.
+                let cross = Self::align_cross_kind(css, &class_refs);
+                if Self::justify_between(css, &class_refs) {
+                    self.writeln(&format!("let __bara_row_w = {ui_var}.available_width();"));
+                    self.writeln(&format!("{ui_var}.allocate_ui_with_layout(egui::vec2(__bara_row_w, {ui_var}.spacing().interact_size.y), egui::Layout::left_to_right(egui::Align::{cross}).with_main_justify(true), |{ui_var}| {{"));
+                } else if cross == "Center" {
+                    self.writeln(&format!("{ui_var}.horizontal_centered(|{ui_var}| {{"));
+                } else if cross == "Max" {
+                    self.writeln(&format!("{ui_var}.with_layout(egui::Layout::left_to_right(egui::Align::Max), |{ui_var}| {{"));
+                } else {
+                    self.writeln(&format!("{ui_var}.horizontal(|{ui_var}| {{"));
+                }
                 self.indent_level += 1;
                 if let Some(gap) = gap_opt {
                     self.writeln(&format!("{ui_var}.spacing_mut().item_spacing.x = {:.1};", gap));
                 }
-                if let Some(w) = max_w {
+                if let Some(w) = width {
+                    self.writeln(&format!("{ui_var}.set_width({:.1});", w));
+                } else if let Some(w) = max_w {
                     self.writeln(&format!("{ui_var}.set_max_width({:.1});", w));
                 }
-                if let Some(h) = max_h {
+                if let Some(h) = height {
+                    self.writeln(&format!("{ui_var}.set_height({:.1});", h));
+                } else if let Some(h) = max_h {
                     self.writeln(&format!("{ui_var}.set_max_height({:.1});", h));
                 }
                 if let Some(o) = opacity {
@@ -1000,6 +1064,34 @@ impl<'a> Codegen<'a> {
                     format!(".{}", mods.join("."))
                 };
                 let content = self.jsx_children_to_rich_text_content(&elem.children);
+                let mut widget =
+                    format!("egui::Button::new(egui::RichText::new({content}){mod_chain})");
+                if let Some(fc) = css.get_fill_code(&class_refs) {
+                    widget = format!("{widget}.{fc}");
+                }
+                if let Some(sc) = css.get_stroke_code(&class_refs) {
+                    widget = format!("{widget}.{sc}");
+                }
+                if let Some(rc) = css.get_rounding_code(&class_refs) {
+                    widget = format!("{widget}.{rc}");
+                }
+                let w = css.get_width(&class_refs);
+                let h = css.get_height(&class_refs);
+                let add_expr = match (w, h) {
+                    (Some(w), Some(h)) => {
+                        format!("{ui_var}.add_sized(egui::vec2({w:.1}, {h:.1}), {widget})")
+                    }
+                    _ => {
+                        let mut b = widget;
+                        if let Some(w) = w {
+                            b = format!("{b}.min_size(egui::vec2({w:.1}, 0.0))");
+                        }
+                        if let Some(h) = h {
+                            b = format!("{b}.min_size(egui::vec2(0.0, {h:.1}))");
+                        }
+                        format!("{ui_var}.add({b})")
+                    }
+                };
                 let opacity = css.get_opacity(&class_refs);
                 if let Some(o) = opacity {
                     if o < 1.0 {
@@ -1009,9 +1101,7 @@ impl<'a> Codegen<'a> {
                     }
                 }
                 let action = on_click_expr.unwrap_or_default();
-                self.writeln(&format!(
-                    "if {ui_var}.add(egui::Button::new(egui::RichText::new({content}){mod_chain})).clicked() {{"
-                ));
+                self.writeln(&format!("if {add_expr}.clicked() {{"));
                 self.indent_level += 1;
                 if !action.is_empty() {
                     if let Some(for_var) = &self.jsx_for_var {
@@ -1043,10 +1133,22 @@ impl<'a> Codegen<'a> {
                     } else {
                         String::new()
                     };
+                    let mut widget =
+                        format!("egui::TextEdit::singleline(&mut {var})");
+                    if let Some(tc) = css.get_text_color_code(&class_refs) {
+                        widget = format!("{widget}.text_color({tc})");
+                    }
+                    if let Some(fs) = css.get_font_size(&class_refs) {
+                        widget =
+                            format!("{widget}.font(egui::FontId::proportional({fs:.1}))");
+                    }
                     let opacity = css.get_opacity(&class_refs);
-                    let line = format!(
-                        "{ui_var}.add(egui::TextEdit::singleline(&mut {var}){hint});"
-                    );
+                    let line = format!("{ui_var}.add({widget}{hint});");
+                    let frame_opt = css.get_frame_code(&class_refs);
+                    if let Some(fc) = &frame_opt {
+                        self.writeln(&format!("{fc}.show({ui_var}, |{ui_var}| {{"));
+                        self.indent_level += 1;
+                    }
                     if let Some(o) = opacity {
                         if o < 1.0 {
                             self.writeln(&format!("{ui_var}.scope(|{ui_var}| {{"));
@@ -1060,6 +1162,10 @@ impl<'a> Codegen<'a> {
                         }
                     } else {
                         self.writeln(&line);
+                    }
+                    if frame_opt.is_some() {
+                        self.indent_level -= 1;
+                        self.writeln("});");
                     }
                 }
             }
@@ -1374,6 +1480,32 @@ impl<'a> Codegen<'a> {
             }
             _ => {}
         }
+    }
+
+    /// Cross-axis alignment from `align-items` (Row and Col containers).
+    /// Returns the `egui::Align` variant name: `Min`, `Center`, or `Max`.
+    fn align_cross_kind(css: &CssStyleSheet, class_refs: &[&str]) -> &'static str {
+        let props = css.resolve_properties(class_refs);
+        let v = props
+            .get("align-items")
+            .map(|s| s.to_lowercase())
+            .unwrap_or_default();
+        if v.contains("center") {
+            "Center"
+        } else if v.contains("flex-end") || v.trim() == "end" || v.contains("bottom") || v.contains("right") || v.contains("max") {
+            "Max"
+        } else {
+            "Min"
+        }
+    }
+
+    /// Whether `justify-content: space-between` is set (Row main-axis spread).
+    fn justify_between(css: &CssStyleSheet, class_refs: &[&str]) -> bool {
+        let props = css.resolve_properties(class_refs);
+        props
+            .get("justify-content")
+            .map(|s| s.contains("space-between"))
+            .unwrap_or(false)
     }
 
     fn emit_main(&mut self, stmts: &[&Stmt], program: &Program) {

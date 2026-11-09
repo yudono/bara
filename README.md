@@ -269,6 +269,11 @@ tests/                 # Unit + integration suites (see docs/testing.md)
 docs/                  # brui_components.md, brui_styling.md, examples.md, testing.md
 ```
 
+Standalone rewrite project (sibling of this repo, not under `examples/`):
+`../Solanum_bara/` — Solanum GNOME pomodoro timer rewritten in full Bara
+(Timer/Settings/About components, `LapType` enum + `match`, frame-based
+ticking via `onUpdate`). Proves Bara covers real-world Rust app patterns.
+
 Every example ships a `bara.toml` with `[package]` + `[presets]` + `[dependencies]`
 tables; `[presets]` selects toolchain behavior (`gui` pulls `eframe`/`egui`).
 

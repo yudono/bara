@@ -11,6 +11,7 @@ examples/
       auth/          # login, register (.br + .brx each, auth session state)
       dashboard/     # overview (metrics/logs/search), users (node CRUD) (.br + .brx each)
   brui_xml_gui/      # XML layout + shared CSS variant (layout.xml + styles.css)
+  ../Solanum_bara/     # Pomodoro timer rewrite (standalone project): Timer/Settings/About + LapType enum + onUpdate ticking
   cli_algorithms/    # Fibonacci, primes, sorting, binary search, GCD
   backend_api/       # HttpRequest/Response + ApiServer dispatch demo
   multi_lib/         # Multi-module imports (libs/*.br), enums, Option/Result
@@ -25,6 +26,7 @@ examples/
 | `dashboard_gui` | `main.br` | `dashboard.brx` sidebar shell + `pages/**` child components + shared `styles.css` | `DashboardApp` boots first (matches `brui.load("dashboard.brx")`); sidebar after login, auth-gated pages; login/register with session, node CRUD (add/edit/remove/filter), KPI + log search |
 | `brui_xml_gui` | `main.br` | `layout.xml` + shared `styles.css` | `XmlDemoApp` (`increment`, `reset`, `login`); XML `bind="..."` / `onClick="..."` string form |
 | `react_tree` | `main.br` | `demo.brx` + `counter.brx` + shared `styles.css` | `ReactDemoApp` parent + `Clicker` children; props, `useEffect`, `onMount`/`onUpdate`/`onUnmount`, persisted child state |
+| `Solanum_bara` | `main.br` | `Timer`/`Settings`/`About` child components + shared `styles.css` | Pomodoro timer rewrite: `LapType` enum + `match`, frame-based ticking via `onUpdate` (250ms repaint), explicit stylesheet import |
 
 Window sizes: todo `450x600`, dashboard `850x620`, brui XML demo `500x400`
 (set via `app.run("Title", width = ..., height = ...)` in each `main.br`).
@@ -42,8 +44,8 @@ Window sizes: todo `450x600`, dashboard `850x620`, brui XML demo `500x400`
 
 `.css` files are explicit-only: a project only gets a stylesheet when some
 `.br`/`.brx` file contains `use "styles.css"` (also accepts `use styles.css`
-or shorthand `use styles`). `dashboard_gui/main.br` and
-`brui_xml_gui/main.br` therefore import their shared `styles.css`, which then
+or shorthand `use styles`). `dashboard_gui/main.br`,
+`brui_xml_gui/main.br`, and `Solanum_bara/main.br` therefore import their shared `styles.css`, which then
 styles every `.brx` page and XML layout in the project; individual `.brx`
 files need no `<style>` block. Inline `<style>` (as in `todo.brx`) merges
 into the same sheet. Without the `use` line the `.css` file is collected but
